@@ -1,0 +1,13 @@
+[package]
+name = "saddle-ai-fov-example-multi-viewers"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bevy = { workspace = true }
+saddle-ai-fov = { workspace = true }
+saddle-ai-fov-example-support = { path = "../support" }
+
+[lints]
+workspace = true

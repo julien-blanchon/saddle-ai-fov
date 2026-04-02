@@ -1,0 +1,20 @@
+[package]
+name = "saddle-ai-fov-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["dev"]
+dev = ["dep:bevy_brp_extras"]
+e2e = ["dep:saddle-bevy-e2e"]
+
+[dependencies]
+bevy = { version = "0.18", features = ["bevy_remote", "serialize"] }
+saddle-ai-fov = { path = "../.." }
+saddle-ai-fov-example-support = { path = "../support" }
+bevy_brp_extras = { version = "0.19", optional = true }
+saddle-bevy-e2e = { git = "https://github.com/julien-blanchon/saddle-bevy-e2e", features = ["json"], optional = true }
+
+[lints]
+workspace = true
