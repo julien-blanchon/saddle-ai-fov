@@ -10,11 +10,14 @@ dev = ["dep:bevy_brp_extras"]
 e2e = ["dep:saddle-bevy-e2e"]
 
 [dependencies]
-bevy = { version = "0.18", features = ["bevy_remote", "serialize"] }
+bevy = { version = "0.18", features = ["serialize"] }
 saddle-ai-fov = { path = "../.." }
 saddle-ai-fov-example-support = { path = "../support" }
 bevy_brp_extras = { version = "0.19", optional = true }
 saddle-bevy-e2e = { git = "https://github.com/julien-blanchon/saddle-bevy-e2e", features = ["json"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { version = "0.18", features = ["bevy_remote"] }
 
 [lints]
 workspace = true

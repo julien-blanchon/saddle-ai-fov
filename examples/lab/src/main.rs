@@ -6,11 +6,11 @@ mod scenarios;
 use saddle_ai_fov_example_support as support;
 
 use bevy::prelude::*;
-#[cfg(feature = "dev")]
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
-#[cfg(feature = "dev")]
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 use bevy_brp_extras::BrpExtrasPlugin;
-use saddle_ai_saddle_ai_fov::{
+use saddle_ai_fov::{
     FovDebugSettings, FovOccluder, FovPlugin, FovTarget, GridFov, GridFovState, GridOpacityMap,
     OccluderShape, SpatialFov, SpatialFovState,
 };
@@ -92,9 +92,9 @@ fn main() {
         ..default()
     }));
     app.init_gizmo_group::<saddle_ai_fov::FovDebugGizmos>();
-    #[cfg(feature = "dev")]
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     app.add_plugins(RemotePlugin::default());
-    #[cfg(feature = "dev")]
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     app.add_plugins(BrpExtrasPlugin::with_http_plugin(
         RemoteHttpPlugin::default(),
     ));

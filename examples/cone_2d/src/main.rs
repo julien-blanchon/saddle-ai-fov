@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use saddle_ai_saddle_ai_fov::{
+use saddle_ai_fov::{
     FovDebugSettings, FovOccluder, FovPlugin, FovTarget, OccluderShape, SpatialFov, SpatialFovState,
 };
 

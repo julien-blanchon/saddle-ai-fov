@@ -1,9 +1,7 @@
 use saddle_ai_fov_example_support as support;
 
 use bevy::prelude::*;
-use saddle_ai_saddle_ai_fov::{
-    FovPlugin, GridFov, GridFovState, GridOpacityMap, merge_grid_visibility,
-};
+use saddle_ai_fov::{FovPlugin, GridFov, GridFovState, GridOpacityMap, merge_grid_visibility};
 use support::{
     GridCellSprite, apply_grid_visibility_colors, demo_grid_map, sample_path, spawn_grid_tiles,
 };
