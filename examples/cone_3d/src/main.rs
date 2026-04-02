@@ -30,8 +30,14 @@ fn main() {
         .init_gizmo_group::<saddle_ai_fov::FovDebugGizmos>()
         .add_plugins(FovPlugin::default())
         .add_systems(Startup, setup)
-        .add_systems(Update, animate_sentry.before(saddle_ai_fov::FovSystems::MarkDirty))
-        .add_systems(Update, tint_targets.after(saddle_ai_fov::FovSystems::Recompute))
+        .add_systems(
+            Update,
+            animate_sentry.before(saddle_ai_fov::FovSystems::MarkDirty),
+        )
+        .add_systems(
+            Update,
+            tint_targets.after(saddle_ai_fov::FovSystems::Recompute),
+        )
         .run();
 }
 

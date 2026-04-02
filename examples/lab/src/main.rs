@@ -106,11 +106,26 @@ fn main() {
         Update,
         animate_grid_viewer.before(saddle_ai_fov::FovSystems::MarkDirty),
     );
-    app.add_systems(Update, animate_guard.before(saddle_ai_fov::FovSystems::MarkDirty));
-    app.add_systems(Update, tint_grid.after(saddle_ai_fov::FovSystems::Recompute));
-    app.add_systems(Update, tint_targets.after(saddle_ai_fov::FovSystems::Recompute));
-    app.add_systems(Update, update_diagnostics.after(saddle_ai_fov::FovSystems::Recompute));
-    app.add_systems(Update, update_overlay.after(saddle_ai_fov::FovSystems::Recompute));
+    app.add_systems(
+        Update,
+        animate_guard.before(saddle_ai_fov::FovSystems::MarkDirty),
+    );
+    app.add_systems(
+        Update,
+        tint_grid.after(saddle_ai_fov::FovSystems::Recompute),
+    );
+    app.add_systems(
+        Update,
+        tint_targets.after(saddle_ai_fov::FovSystems::Recompute),
+    );
+    app.add_systems(
+        Update,
+        update_diagnostics.after(saddle_ai_fov::FovSystems::Recompute),
+    );
+    app.add_systems(
+        Update,
+        update_overlay.after(saddle_ai_fov::FovSystems::Recompute),
+    );
     app.run();
 }
 
