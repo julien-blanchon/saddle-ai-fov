@@ -1,5 +1,5 @@
-mod awareness;
 mod algorithms;
+mod awareness;
 mod components;
 mod config;
 mod debug;
@@ -9,9 +9,9 @@ mod resources;
 mod spatial;
 mod systems;
 
-pub use awareness::{AwarenessLevel, SpatialAwarenessConfig, SpatialAwarenessEntry};
 pub use crate::algorithms::los::{has_grid_line_of_sight, supercover_line};
 pub use crate::algorithms::shadowcasting::compute_grid_fov;
+pub use awareness::{AwarenessLevel, SpatialAwarenessConfig, SpatialAwarenessEntry};
 pub use components::{
     FovDirty, FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, GridFovState, SpatialFov,
     SpatialFovState,
@@ -22,13 +22,13 @@ pub use grid::{
     GridCornerPolicy, GridFovBackend, GridFovConfig, GridFovResult, GridMapSpec, GridOpacityMap,
     merge_grid_visibility,
 };
+pub use messages::{SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost};
 pub use resources::FovStats;
 pub use spatial::{
     OccluderShape, SpatialDimension, SpatialShape, SpatialVisibilityQuery, VisibilityLayer,
     VisibilityLayerMask, VisibilityTestResult, WorldOccluder, evaluate_visibility,
     merge_spatial_visibility, occluded_by_any,
 };
-pub use messages::{SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost};
 
 use bevy::{
     app::PostStartup,

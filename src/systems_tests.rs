@@ -265,7 +265,10 @@ fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
     let awareness = state
         .awareness_of(target)
         .expect("target should still be remembered while searching");
-    assert!(matches!(awareness.level, AwarenessLevel::Searching | AwarenessLevel::Lost));
+    assert!(matches!(
+        awareness.level,
+        AwarenessLevel::Searching | AwarenessLevel::Lost
+    ));
 
     advance_time(&mut app, 0.5);
     app.update();

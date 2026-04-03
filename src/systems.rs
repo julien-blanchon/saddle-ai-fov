@@ -12,12 +12,12 @@ use bevy::{
 };
 
 use crate::{
+    FovRuntimeConfig,
+    algorithms::shadowcasting::compute_grid_fov,
     awareness::{
         AwarenessLevel, SpatialAwarenessEntry, classify_awareness, should_forget_target,
         visibility_score_for_sample,
     },
-    FovRuntimeConfig,
-    algorithms::shadowcasting::compute_grid_fov,
     components::{
         FovDirty, FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, GridFovState,
         SpatialFov, SpatialFovState,
@@ -209,7 +209,12 @@ pub(crate) fn recompute_viewers(
         ),
         With<FovDirty>,
     >,
-    targets: Query<(Entity, &GlobalTransform, &FovTarget, Option<&FovPerceptionModifiers>)>,
+    targets: Query<(
+        Entity,
+        &GlobalTransform,
+        &FovTarget,
+        Option<&FovPerceptionModifiers>,
+    )>,
     occluders: Query<(&GlobalTransform, &FovOccluder)>,
     mut grid_states: Query<&mut GridFovState>,
     mut spatial_states: Query<&mut SpatialFovState>,
@@ -475,7 +480,12 @@ fn update_spatial_viewer(
     transform: &GlobalTransform,
     viewer: &SpatialFov,
     delta_seconds: f32,
-    target_samples: &[(Entity, VisibilityLayerMask, FovPerceptionModifiers, Vec<Vec3>)],
+    target_samples: &[(
+        Entity,
+        VisibilityLayerMask,
+        FovPerceptionModifiers,
+        Vec<Vec3>,
+    )],
     occluders: &[(VisibilityLayerMask, WorldOccluder)],
     spatial_states: &mut Query<&mut SpatialFovState>,
     awareness_changed: &mut MessageWriter<SpatialAwarenessChanged>,
@@ -674,7 +684,11 @@ fn emit_awareness_messages(
     target_detected: &mut MessageWriter<SpatialTargetDetected>,
     target_lost: &mut MessageWriter<SpatialTargetLost>,
 ) {
-    let next_map: HashMap<_, _> = next.iter().cloned().map(|entry| (entry.entity, entry)).collect();
+    let next_map: HashMap<_, _> = next
+        .iter()
+        .cloned()
+        .map(|entry| (entry.entity, entry))
+        .collect();
 
     for (target, entry) in &next_map {
         let previous_level = previous
