@@ -1,7 +1,8 @@
 use bevy::prelude::*;
-use saddle_ai_saddle_ai_fov::{
+use saddle_ai_fov::{
     FovDebugSettings, FovOccluder, FovPlugin, FovTarget, OccluderShape, SpatialFov, SpatialFovState,
 };
+use saddle_pane::prelude::*;
 
 #[derive(Component)]
 struct Sentry;
@@ -9,9 +10,43 @@ struct Sentry;
 #[derive(Component)]
 struct TargetMesh;
 
+#[derive(Resource, Debug, Clone, Copy, Pane)]
+#[pane(title = "3D Cone FOV", position = "top-right")]
+struct Cone3dPane {
+    #[pane]
+    pause_motion: bool,
+    #[pane(slider, min = 120.0, max = 420.0, step = 5.0)]
+    range: f32,
+    #[pane(slider, min = 0.15, max = 1.0, step = 0.02)]
+    half_angle: f32,
+    #[pane(slider, min = 0.0, max = 96.0, step = 2.0)]
+    near_override: f32,
+    #[pane(slider, min = 0.1, max = 0.9, step = 0.02)]
+    sweep_speed: f32,
+    #[pane(monitor)]
+    visible_targets: usize,
+    #[pane(monitor)]
+    remembered_targets: usize,
+}
+
+impl Default for Cone3dPane {
+    fn default() -> Self {
+        Self {
+            pause_motion: false,
+            range: 280.0,
+            half_angle: 0.52,
+            near_override: 46.0,
+            sweep_speed: 0.35,
+            visible_targets: 0,
+            remembered_targets: 0,
+        }
+    }
+}
+
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.025, 0.03, 0.035)))
+        .insert_resource(Cone3dPane::default())
         .insert_resource(FovDebugSettings {
             enabled: true,
             draw_grid_cells: false,
@@ -27,9 +62,21 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins((
+            bevy_flair::FlairPlugin,
+            bevy_input_focus::InputDispatchPlugin,
+            bevy_ui_widgets::UiWidgetsPlugins,
+            bevy_input_focus::tab_navigation::TabNavigationPlugin,
+            PanePlugin,
+        ))
+        .register_pane::<Cone3dPane>()
         .init_gizmo_group::<saddle_ai_fov::FovDebugGizmos>()
         .add_plugins(FovPlugin::default())
         .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            sync_controls.before(saddle_ai_fov::FovSystems::MarkDirty),
+        )
         .add_systems(
             Update,
             animate_sentry.before(saddle_ai_fov::FovSystems::MarkDirty),
@@ -37,6 +84,10 @@ fn main() {
         .add_systems(
             Update,
             tint_targets.after(saddle_ai_fov::FovSystems::Recompute),
+        )
+        .add_systems(
+            Update,
+            update_pane.after(saddle_ai_fov::FovSystems::Recompute),
         )
         .run();
 }
@@ -126,11 +177,31 @@ fn setup(
 
 fn animate_sentry(
     time: Res<Time>,
+    pane: Res<Cone3dPane>,
     mut sentry: Single<(&mut Transform, &mut GlobalTransform), With<Sentry>>,
 ) {
-    let angle = (time.elapsed_secs() * 0.35).sin() * 0.65 - 0.4;
+    if pane.pause_motion {
+        return;
+    }
+
+    let angle = (time.elapsed_secs() * pane.sweep_speed).sin() * 0.65 - 0.4;
     sentry.0.rotation = Quat::from_rotation_y(angle);
     *sentry.1 = GlobalTransform::from(*sentry.0.as_ref());
+}
+
+fn sync_controls(
+    pane: Res<Cone3dPane>,
+    mut sentry: Single<&mut SpatialFov, With<Sentry>>,
+) {
+    if !pane.is_changed() {
+        return;
+    }
+
+    sentry.shape = saddle_ai_fov::SpatialShape::Cone {
+        range: pane.range.max(0.0),
+        half_angle_radians: pane.half_angle.max(0.0),
+    };
+    sentry.near_override = pane.near_override.max(0.0);
 }
 
 fn tint_targets(
@@ -150,4 +221,9 @@ fn tint_targets(
             Color::srgb(0.54, 0.58, 0.62)
         };
     }
+}
+
+fn update_pane(sentry: Single<&SpatialFovState, With<Sentry>>, mut pane: ResMut<Cone3dPane>) {
+    pane.visible_targets = sentry.visible_now.len();
+    pane.remembered_targets = sentry.remembered.len();
 }

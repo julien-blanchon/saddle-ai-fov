@@ -87,8 +87,26 @@ Use `GridOpacityMap::from_fn(...)` to build it from external map data.
 | `local_origin` | `Vec3` | `Vec3::ZERO` | Viewer-local sample point used as the origin of the query. |
 | `local_forward` | `Vec3` | `Vec3::X` | Viewer-local forward vector. Used only for cone tests. |
 | `near_override` | `f32` | `0.0` | Distance where targets bypass angular gating. |
+| `awareness` | `SpatialAwarenessConfig` | see below | Detection-speed, decay, focused/peripheral weighting, and forgetting settings. |
 | `remember_seen_targets` | `bool` | `true` | If `true`, previously seen targets stay in `SpatialFovState::remembered`. |
 | `enabled` | `bool` | `true` | Disables this viewer without removing the component. |
+
+### `SpatialAwarenessConfig`
+
+| Field | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `enabled` | `bool` | `true` | Enables time-based awareness accumulation, decay, and forgetting for this viewer. |
+| `max_awareness` | `f32` | `1.0` | Upper bound for the normalized awareness meter. |
+| `alert_threshold` | `f32` | `0.8` | Awareness value where the target becomes `Alert`. |
+| `gain_per_second` | `f32` | `0.9` | Base awareness gain per second while the target is visible. |
+| `loss_per_second` | `f32` | `0.45` | Base awareness loss per second while the target is not visible. |
+| `focused_half_angle_radians` | `f32` | `0.24` | Inner cone treated as focused vision for cone-based viewers. |
+| `focused_gain_multiplier` | `f32` | `1.35` | Extra gain applied to focused samples. |
+| `peripheral_gain_multiplier` | `f32` | `0.55` | Gain applied to samples outside the focused cone but still inside the outer cone. |
+| `distance_falloff_exponent` | `f32` | `1.2` | Shapes how strongly awareness gain falls off with distance. |
+| `minimum_visibility_factor` | `f32` | `0.18` | Floor for distance-based visibility scoring near the edge of range. |
+| `noise_gain_per_second` | `f32` | `0.22` | Additional awareness gain from noisy targets that are in range and not occluded. |
+| `forget_after_seconds` | `f32` | `8.0` | Time after the last sighting before the target is removed from remembered awareness state. |
 
 ### `FovTarget`
 
@@ -97,6 +115,15 @@ Use `GridOpacityMap::from_fn(...)` to build it from external map data.
 | `layers` | `VisibilityLayerMask` | `ALL` | Target-side layer filter. |
 | `sample_points` | `Vec<Vec3>` | `[Vec3::ZERO]` | Local-space samples tested in order. Multiple samples reduce false negatives for tall or wide targets. |
 | `enabled` | `bool` | `true` | Temporarily disables the target. |
+
+### `FovPerceptionModifiers`
+
+| Field | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `light_exposure` | `f32` | `1.0` | Multiplies awareness gain while the target is visible. |
+| `noise_emission` | `f32` | `0.0` | Adds awareness gain while the target is nearby and not occluded, even if it is not directly visible. |
+| `awareness_gain_multiplier` | `f32` | `1.0` | Additional target-specific gain multiplier for visibility-driven detection. |
+| `awareness_loss_multiplier` | `f32` | `1.0` | Additional target-specific decay multiplier while the target is hidden. |
 
 ### `FovOccluder`
 
@@ -124,3 +151,4 @@ Use `GridOpacityMap::from_fn(...)` to build it from external map data.
 | `remembered` | Union of all seen targets when memory is enabled. |
 | `entered` | Targets that entered visibility on the last published change. |
 | `exited` | Targets that left visibility on the last published change. |
+| `awareness` | Per-target awareness entries including level, normalized meter, last seen age, and last known position. |

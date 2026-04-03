@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
+    awareness::{SpatialAwarenessConfig, SpatialAwarenessEntry},
     grid::GridFovConfig,
     spatial::{OccluderShape, SpatialDimension, SpatialShape, VisibilityLayerMask},
 };
@@ -65,6 +66,7 @@ pub struct SpatialFov {
     pub local_origin: Vec3,
     pub local_forward: Vec3,
     pub near_override: f32,
+    pub awareness: SpatialAwarenessConfig,
     pub remember_seen_targets: bool,
     pub enabled: bool,
 }
@@ -80,6 +82,7 @@ impl SpatialFov {
             local_origin: Vec3::ZERO,
             local_forward: Vec3::X,
             near_override: 0.0,
+            awareness: SpatialAwarenessConfig::default(),
             remember_seen_targets: true,
             enabled: true,
         }
@@ -96,6 +99,7 @@ impl SpatialFov {
             local_origin: Vec3::ZERO,
             local_forward: Vec3::X,
             near_override: 0.0,
+            awareness: SpatialAwarenessConfig::default(),
             remember_seen_targets: true,
             enabled: true,
         }
@@ -112,6 +116,7 @@ impl SpatialFov {
             local_origin: Vec3::ZERO,
             local_forward: Vec3::X,
             near_override: 0.0,
+            awareness: SpatialAwarenessConfig::default(),
             remember_seen_targets: true,
             enabled: true,
         }
@@ -136,6 +141,11 @@ impl SpatialFov {
         self.near_override = near_override.max(0.0);
         self
     }
+
+    pub fn with_awareness(mut self, awareness: SpatialAwarenessConfig) -> Self {
+        self.awareness = awareness;
+        self
+    }
 }
 
 #[derive(Component, Debug, Clone, Default, PartialEq, Reflect)]
@@ -145,11 +155,16 @@ pub struct SpatialFovState {
     pub remembered: Vec<Entity>,
     pub entered: Vec<Entity>,
     pub exited: Vec<Entity>,
+    pub awareness: Vec<SpatialAwarenessEntry>,
 }
 
 impl SpatialFovState {
     pub fn contains(&self, entity: Entity) -> bool {
         self.visible_now.contains(&entity)
+    }
+
+    pub fn awareness_of(&self, entity: Entity) -> Option<&SpatialAwarenessEntry> {
+        self.awareness.iter().find(|entry| entry.entity == entity)
     }
 }
 
@@ -188,6 +203,26 @@ impl FovTarget {
 impl Default for FovTarget {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Component, Debug, Clone, Copy, PartialEq, Reflect)]
+#[reflect(Component)]
+pub struct FovPerceptionModifiers {
+    pub light_exposure: f32,
+    pub noise_emission: f32,
+    pub awareness_gain_multiplier: f32,
+    pub awareness_loss_multiplier: f32,
+}
+
+impl Default for FovPerceptionModifiers {
+    fn default() -> Self {
+        Self {
+            light_exposure: 1.0,
+            noise_emission: 0.0,
+            awareness_gain_multiplier: 1.0,
+            awareness_loss_multiplier: 1.0,
+        }
     }
 }
 

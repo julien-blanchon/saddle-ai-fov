@@ -6,6 +6,7 @@ members = [
     "multi_viewers",
     "cone_2d",
     "cone_3d",
+    "stealth_detection",
     "lab",
 ]
 resolver = "3"

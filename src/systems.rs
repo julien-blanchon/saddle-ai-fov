@@ -1,4 +1,7 @@
-use std::{collections::HashSet, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use bevy::{
     color::palettes::css,
@@ -9,13 +12,19 @@ use bevy::{
 };
 
 use crate::{
+    awareness::{
+        AwarenessLevel, SpatialAwarenessEntry, classify_awareness, should_forget_target,
+        visibility_score_for_sample,
+    },
     FovRuntimeConfig,
     algorithms::shadowcasting::compute_grid_fov,
     components::{
-        FovDirty, FovOccluder, FovTarget, GridFov, GridFovState, SpatialFov, SpatialFovState,
+        FovDirty, FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, GridFovState,
+        SpatialFov, SpatialFovState,
     },
     debug::{FovDebugGizmos, FovDebugSettings},
     grid::GridOpacityMap,
+    messages::{SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost},
     resources::FovStats,
     spatial::{
         SpatialDimension, SpatialShape, SpatialVisibilityQuery, VisibilityLayerMask, WorldOccluder,
@@ -63,6 +72,8 @@ pub(crate) fn deactivate_runtime(
                 state.exited = state.visible_now.clone();
                 state.visible_now.clear();
             }
+            state.awareness.clear();
+            state.remembered.clear();
         }
     }
 }
@@ -148,6 +159,7 @@ pub(crate) fn mark_viewers_dirty(
     mut removed_targets: RemovedComponents<FovTarget>,
     mut removed_occluders: RemovedComponents<FovOccluder>,
     all_viewers: Query<Entity, Or<(With<GridFov>, With<SpatialFov>)>>,
+    awareness_viewers: Query<(Entity, &SpatialFov)>,
     dirty_viewers: Query<Entity, With<FovDirty>>,
     mut stats: ResMut<FovStats>,
 ) {
@@ -171,10 +183,20 @@ pub(crate) fn mark_viewers_dirty(
         }
     }
 
+    // Awareness-driven detection and forgetting are time-based, so these viewers
+    // must continue recomputing even when no transforms or occluders changed.
+    for (entity, viewer) in &awareness_viewers {
+        if viewer.awareness.enabled {
+            commands.entity(entity).insert(FovDirty);
+            pending_dirty.insert(entity);
+        }
+    }
+
     stats.dirty_viewers = pending_dirty.len();
 }
 
 pub(crate) fn recompute_viewers(
+    time: Res<Time>,
     mut commands: Commands,
     runtime_config: Res<FovRuntimeConfig>,
     grid_map: Option<Res<GridOpacityMap>>,
@@ -187,21 +209,25 @@ pub(crate) fn recompute_viewers(
         ),
         With<FovDirty>,
     >,
-    targets: Query<(Entity, &GlobalTransform, &FovTarget)>,
+    targets: Query<(Entity, &GlobalTransform, &FovTarget, Option<&FovPerceptionModifiers>)>,
     occluders: Query<(&GlobalTransform, &FovOccluder)>,
     mut grid_states: Query<&mut GridFovState>,
     mut spatial_states: Query<&mut SpatialFovState>,
+    mut awareness_changed: MessageWriter<SpatialAwarenessChanged>,
+    mut target_detected: MessageWriter<SpatialTargetDetected>,
+    mut target_lost: MessageWriter<SpatialTargetLost>,
     mut stats: ResMut<FovStats>,
 ) {
     let start = Instant::now();
 
     let target_samples: Vec<_> = targets
         .iter()
-        .filter(|(_, _, target)| target.enabled)
-        .map(|(entity, transform, target)| {
+        .filter(|(_, _, target, _)| target.enabled)
+        .map(|(entity, transform, target, modifiers)| {
             (
                 entity,
                 target.layers,
+                modifiers.copied().unwrap_or_default(),
                 target
                     .sample_points
                     .iter()
@@ -250,9 +276,13 @@ pub(crate) fn recompute_viewers(
                 entity,
                 transform,
                 spatial_viewer,
+                time.delta_secs(),
                 &target_samples,
                 &occluder_samples,
                 &mut spatial_states,
+                &mut awareness_changed,
+                &mut target_detected,
+                &mut target_lost,
                 &mut stats,
             );
         }
@@ -444,9 +474,13 @@ fn update_spatial_viewer(
     entity: Entity,
     transform: &GlobalTransform,
     viewer: &SpatialFov,
-    target_samples: &[(Entity, VisibilityLayerMask, Vec<Vec3>)],
+    delta_seconds: f32,
+    target_samples: &[(Entity, VisibilityLayerMask, FovPerceptionModifiers, Vec<Vec3>)],
     occluders: &[(VisibilityLayerMask, WorldOccluder)],
     spatial_states: &mut Query<&mut SpatialFovState>,
+    awareness_changed: &mut MessageWriter<SpatialAwarenessChanged>,
+    target_detected: &mut MessageWriter<SpatialTargetDetected>,
+    target_lost: &mut MessageWriter<SpatialTargetLost>,
     stats: &mut FovStats,
 ) {
     let Ok(mut state) = spatial_states.get_mut(entity) else {
@@ -454,7 +488,7 @@ fn update_spatial_viewer(
     };
 
     if !viewer.enabled {
-        publish_spatial_state(&mut state, Vec::new(), viewer.remember_seen_targets);
+        publish_spatial_state(&mut state, Vec::new(), Vec::new(), Vec::new());
         return;
     }
 
@@ -469,13 +503,20 @@ fn update_spatial_viewer(
     };
 
     let mut visible_now = Vec::new();
+    let previous_awareness: HashMap<_, _> = state
+        .awareness
+        .iter()
+        .cloned()
+        .map(|entry| (entry.entity, entry))
+        .collect();
+    let mut next_awareness = Vec::new();
     let relevant_occluders: Vec<_> = occluders
         .iter()
         .filter(|(occluder_layers, _)| viewer.layers.overlaps(*occluder_layers))
         .map(|(_, occluder)| *occluder)
         .collect();
 
-    for (target_entity, layers, samples) in target_samples {
+    for (target_entity, layers, modifiers, samples) in target_samples {
         if !viewer.layers.overlaps(*layers) {
             continue;
         }
@@ -489,12 +530,195 @@ fn update_spatial_viewer(
         if result.visible {
             visible_now.push(*target_entity);
         }
+
+        if let Some(entry) = update_awareness_entry(
+            *target_entity,
+            viewer,
+            &query,
+            *modifiers,
+            &result,
+            delta_seconds,
+            previous_awareness.get(target_entity).cloned(),
+        ) {
+            next_awareness.push(entry);
+        }
     }
 
     visible_now.sort_by_key(|entity| entity.index());
     visible_now.dedup();
+    next_awareness.sort_by_key(|entry| entry.entity.index());
+    let remembered_now = if !viewer.awareness.enabled {
+        if viewer.remember_seen_targets {
+            let mut remembered = state.remembered.clone();
+            remembered.extend(visible_now.iter().copied());
+            remembered.sort_by_key(|entity| entity.index());
+            remembered.dedup();
+            remembered
+        } else {
+            visible_now.clone()
+        }
+    } else if viewer.remember_seen_targets {
+        let mut remembered: Vec<_> = next_awareness
+            .iter()
+            .filter(|entry| entry.currently_visible || entry.last_seen_seconds_ago.is_some())
+            .map(|entry| entry.entity)
+            .collect();
+        remembered.sort_by_key(|entity| entity.index());
+        remembered.dedup();
+        remembered
+    } else {
+        visible_now.clone()
+    };
+
+    emit_awareness_messages(
+        entity,
+        &previous_awareness,
+        &next_awareness,
+        awareness_changed,
+        target_detected,
+        target_lost,
+    );
     stats.visible_targets_total += visible_now.len();
-    publish_spatial_state(&mut state, visible_now, viewer.remember_seen_targets);
+    publish_spatial_state(&mut state, visible_now, remembered_now, next_awareness);
+}
+
+fn update_awareness_entry(
+    target_entity: Entity,
+    viewer: &SpatialFov,
+    query: &SpatialVisibilityQuery,
+    modifiers: FovPerceptionModifiers,
+    result: &crate::spatial::VisibilityTestResult,
+    delta_seconds: f32,
+    previous: Option<SpatialAwarenessEntry>,
+) -> Option<SpatialAwarenessEntry> {
+    if !viewer.awareness.enabled {
+        return None;
+    }
+
+    let mut entry = previous.unwrap_or_else(|| SpatialAwarenessEntry::new(target_entity));
+    let had_seen_target = entry.last_seen_seconds_ago.is_some() || result.visible;
+
+    entry.currently_visible = result.visible;
+    entry.visibility_score = 0.0;
+    entry.focused = false;
+
+    if result.visible {
+        let sample = result.visible_sample.unwrap_or(query.origin);
+        let score = visibility_score_for_sample(query, sample, &viewer.awareness);
+        let gain = delta_seconds.max(0.0)
+            * viewer.awareness.gain_per_second.max(0.0)
+            * score.visibility_score
+            * modifiers.light_exposure.max(0.0)
+            * modifiers.awareness_gain_multiplier.max(0.0);
+        entry.awareness = (entry.awareness + gain).clamp(0.0, viewer.awareness.max_awareness);
+        entry.visibility_score = score.visibility_score;
+        entry.focused = score.focused;
+        entry.last_seen_seconds_ago = Some(0.0);
+        entry.last_known_position = result.visible_sample;
+    } else {
+        if let Some(last_seen) = entry.last_seen_seconds_ago.as_mut() {
+            *last_seen += delta_seconds.max(0.0);
+        }
+
+        let mut next_awareness = (entry.awareness
+            - delta_seconds.max(0.0)
+                * viewer.awareness.loss_per_second.max(0.0)
+                * modifiers.awareness_loss_multiplier.max(0.0))
+        .max(0.0);
+
+        if result.in_range && !result.occluded && modifiers.noise_emission > 0.0 {
+            next_awareness = (next_awareness
+                + delta_seconds.max(0.0)
+                    * viewer.awareness.noise_gain_per_second.max(0.0)
+                    * modifiers.noise_emission.max(0.0))
+            .clamp(0.0, viewer.awareness.max_awareness);
+        }
+
+        entry.awareness = next_awareness;
+    }
+
+    entry.level = classify_awareness(
+        entry.awareness,
+        entry.currently_visible,
+        had_seen_target,
+        viewer.awareness.forget_after_seconds,
+        entry.last_seen_seconds_ago,
+        viewer.awareness.alert_threshold,
+    );
+
+    if entry.level == AwarenessLevel::Unaware
+        && should_forget_target(
+            viewer.awareness.forget_after_seconds,
+            entry.last_seen_seconds_ago,
+        )
+    {
+        return None;
+    }
+
+    if entry.level == AwarenessLevel::Unaware
+        && !entry.currently_visible
+        && entry.last_seen_seconds_ago.is_none()
+        && entry.awareness <= 0.0
+    {
+        return None;
+    }
+
+    Some(entry)
+}
+
+fn emit_awareness_messages(
+    viewer: Entity,
+    previous: &HashMap<Entity, SpatialAwarenessEntry>,
+    next: &[SpatialAwarenessEntry],
+    awareness_changed: &mut MessageWriter<SpatialAwarenessChanged>,
+    target_detected: &mut MessageWriter<SpatialTargetDetected>,
+    target_lost: &mut MessageWriter<SpatialTargetLost>,
+) {
+    let next_map: HashMap<_, _> = next.iter().cloned().map(|entry| (entry.entity, entry)).collect();
+
+    for (target, entry) in &next_map {
+        let previous_level = previous
+            .get(target)
+            .map(|previous| previous.level)
+            .unwrap_or(AwarenessLevel::Unaware);
+        if previous_level != entry.level {
+            awareness_changed.write(SpatialAwarenessChanged {
+                viewer,
+                target: *target,
+                previous_level,
+                level: entry.level,
+                awareness: entry.awareness,
+                last_known_position: entry.last_known_position,
+            });
+        }
+
+        if previous_level != AwarenessLevel::Alert && entry.level == AwarenessLevel::Alert {
+            target_detected.write(SpatialTargetDetected {
+                viewer,
+                target: *target,
+                awareness: entry.awareness,
+                last_known_position: entry.last_known_position,
+            });
+        }
+    }
+
+    for (target, entry) in previous {
+        let next_level = next_map
+            .get(target)
+            .map(|next| next.level)
+            .unwrap_or(AwarenessLevel::Unaware);
+        if entry.level == AwarenessLevel::Alert && next_level != AwarenessLevel::Alert {
+            let next_entry = next_map.get(target);
+            target_lost.write(SpatialTargetLost {
+                viewer,
+                target: *target,
+                awareness: next_entry.map(|next| next.awareness).unwrap_or(0.0),
+                last_known_position: next_entry
+                    .and_then(|next| next.last_known_position)
+                    .or(entry.last_known_position),
+            });
+        }
+    }
 }
 
 fn publish_grid_state(state: &mut GridFovState, visible_now: Vec<IVec2>, remember_seen: bool) {
@@ -540,7 +764,8 @@ fn publish_grid_state(state: &mut GridFovState, visible_now: Vec<IVec2>, remembe
 fn publish_spatial_state(
     state: &mut SpatialFovState,
     visible_now: Vec<Entity>,
-    remember_seen: bool,
+    remembered_now: Vec<Entity>,
+    awareness_entries: Vec<SpatialAwarenessEntry>,
 ) {
     let old_visible: HashSet<_> = state.visible_now.iter().copied().collect();
     let new_visible: HashSet<_> = visible_now.iter().copied().collect();
@@ -559,26 +784,18 @@ fn publish_spatial_state(
     entered.sort_by_key(|entity| entity.index());
     exited.sort_by_key(|entity| entity.index());
 
-    let mut remembered = if remember_seen {
-        let mut seen: HashSet<_> = state.remembered.iter().copied().collect();
-        seen.extend(visible_now.iter().copied());
-        let mut seen_vec: Vec<_> = seen.into_iter().collect();
-        seen_vec.sort_by_key(|entity| entity.index());
-        seen_vec
-    } else {
-        visible_now.clone()
-    };
-
-    let changed = state.visible_now != visible_now || state.remembered != remembered;
+    let changed = state.visible_now != visible_now
+        || state.remembered != remembered_now
+        || state.awareness != awareness_entries;
     if !changed {
         return;
     }
 
     state.visible_now = visible_now;
-    state.remembered.clear();
-    state.remembered.append(&mut remembered);
+    state.remembered = remembered_now;
     state.entered = entered;
     state.exited = exited;
+    state.awareness = awareness_entries;
 }
 
 fn draw_cone_3d(

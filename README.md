@@ -59,6 +59,9 @@ Pure-Rust consumers can skip ECS entirely and call `compute_grid_fov(...)` or `e
 - Plugin: `FovPlugin`
 - System sets: `FovSystems::{Prepare, MarkDirty, Recompute, DebugDraw}`
 - Runtime config and stats: `FovRuntimeConfig`, `FovStats`, `FovDebugSettings`, `FovDebugGizmos`
+- Awareness and messages:
+  `AwarenessLevel`, `SpatialAwarenessConfig`, `SpatialAwarenessEntry`,
+  `SpatialAwarenessChanged`, `SpatialTargetDetected`, `SpatialTargetLost`
 - Grid layer:
   `GridMapSpec`, `GridOpacityMap`, `GridFovConfig`, `GridFovBackend`, `GridCornerPolicy`, `GridFovResult`, `compute_grid_fov`
 - Spatial layer:
@@ -66,7 +69,7 @@ Pure-Rust consumers can skip ECS entirely and call `compute_grid_fov(...)` or `e
 - ECS viewer components:
   `GridFov`, `GridFovState`, `SpatialFov`, `SpatialFovState`, `FovDirty`
 - ECS world inputs:
-  `FovTarget`, `FovOccluder`, `OccluderShape`
+  `FovTarget`, `FovOccluder`, `OccluderShape`, `FovPerceptionModifiers`
 - Pure helpers:
   `evaluate_visibility`, `occluded_by_any`, `has_grid_line_of_sight`, `supercover_line`, `merge_grid_visibility`, `merge_spatial_visibility`
 
@@ -96,6 +99,8 @@ The API is intentionally open-ended. Consumers can keep the ECS integration and 
 - `GridFovConfig::reveal_blockers` controls whether opaque target cells count as visible.
 - A cone with a zero-length forward vector degrades to range-only behavior instead of panicking.
 - `SpatialFov::with_near_override(...)` lets very close targets bypass angular gating, which keeps perception stable near cone boundaries.
+- Awareness-enabled spatial viewers continue recomputing while active so detection meters can rise, decay, and forget on time alone.
+- `FovPerceptionModifiers` lets games bias awareness gain with lighting, noise, and target-specific multipliers without coupling the crate to a lighting or audio system.
 - Public state components are only rewritten when the published visibility sets actually change. That keeps `Changed<GridFovState>` and `Changed<SpatialFovState>` useful for downstream systems.
 
 ## Examples
@@ -107,6 +112,7 @@ The API is intentionally open-ended. Consumers can keep the ECS integration and 
 | `multi_viewers` | Merges multiple viewer states without coupling the viewers together | `cargo run -p saddle-ai-fov --example multi_viewers` |
 | `cone_2d` | Top-down cone checks with simple occluder primitives and live debug rays | `cargo run -p saddle-ai-fov --example cone_2d` |
 | `cone_3d` | 3D sentry vision with multi-sample targets and box occluders | `cargo run -p saddle-ai-fov --example cone_3d` |
+| `stealth_detection` | Game-like stealth scene with awareness gain, focused vs peripheral vision, and perception modifiers | `cargo run -p saddle-ai-fov-example-stealth-detection` |
 | `saddle-ai-fov-lab` | Crate-local showcase with BRP and E2E hooks | `cargo run -p saddle-ai-fov-lab` |
 
 ## Crate-Local Lab
@@ -123,6 +129,7 @@ E2E commands:
 cargo run -p saddle-ai-fov-lab --features e2e -- smoke_launch
 cargo run -p saddle-ai-fov-lab --features e2e -- fov_grid_memory
 cargo run -p saddle-ai-fov-lab --features e2e -- fov_cone_occlusion
+cargo run -p saddle-ai-fov-lab --features e2e -- fov_awareness_detection
 ```
 
 `fov_smoke` remains as a backward-compatible alias for `smoke_launch`.
@@ -147,7 +154,7 @@ uv run --project .codex/skills/bevy-brp/script brp extras shutdown
 - The built-in grid adapter is square-grid only. Hex support is not included in v1.
 - `RecursiveShadowcasting` is the default backend, not a fully symmetric shadowcasting implementation.
 - The ECS spatial occlusion layer uses simple discs, rectangles, spheres, and boxes. If you need collider-accurate 3D traces, call `evaluate_visibility` with your own adapter.
-- The runtime tracks remembered cells and targets, but it does not publish a time-based forgetting policy in v1.
+- Environmental modifiers are intentionally lightweight hooks. The crate does not own a lighting database, sound propagation model, or stealth-state machine.
 
 ## More Docs
 

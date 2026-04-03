@@ -1,16 +1,20 @@
+mod awareness;
 mod algorithms;
 mod components;
 mod config;
 mod debug;
 mod grid;
+mod messages;
 mod resources;
 mod spatial;
 mod systems;
 
+pub use awareness::{AwarenessLevel, SpatialAwarenessConfig, SpatialAwarenessEntry};
 pub use crate::algorithms::los::{has_grid_line_of_sight, supercover_line};
 pub use crate::algorithms::shadowcasting::compute_grid_fov;
 pub use components::{
-    FovDirty, FovOccluder, FovTarget, GridFov, GridFovState, SpatialFov, SpatialFovState,
+    FovDirty, FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, GridFovState, SpatialFov,
+    SpatialFovState,
 };
 pub use config::FovRuntimeConfig;
 pub use debug::{FovDebugGizmos, FovDebugSettings};
@@ -24,6 +28,7 @@ pub use spatial::{
     VisibilityLayerMask, VisibilityTestResult, WorldOccluder, evaluate_visibility,
     merge_spatial_visibility, occluded_by_any,
 };
+pub use messages::{SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost};
 
 use bevy::{
     app::PostStartup,
@@ -92,9 +97,14 @@ impl Plugin for FovPlugin {
         app.init_resource::<FovStats>()
             .init_resource::<FovDebugSettings>()
             .init_resource::<systems::FovRuntimeState>()
+            .add_message::<SpatialAwarenessChanged>()
+            .add_message::<SpatialTargetDetected>()
+            .add_message::<SpatialTargetLost>()
+            .register_type::<AwarenessLevel>()
             .register_type::<FovDebugSettings>()
             .register_type::<FovDirty>()
             .register_type::<FovOccluder>()
+            .register_type::<FovPerceptionModifiers>()
             .register_type::<FovTarget>()
             .register_type::<FovRuntimeConfig>()
             .register_type::<FovStats>()
@@ -106,6 +116,8 @@ impl Plugin for FovPlugin {
             .register_type::<GridMapSpec>()
             .register_type::<GridOpacityMap>()
             .register_type::<OccluderShape>()
+            .register_type::<SpatialAwarenessConfig>()
+            .register_type::<SpatialAwarenessEntry>()
             .register_type::<SpatialDimension>()
             .register_type::<SpatialFov>()
             .register_type::<SpatialFovState>()

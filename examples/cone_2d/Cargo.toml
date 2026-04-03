@@ -7,6 +7,10 @@ publish = false
 [dependencies]
 bevy = { workspace = true }
 saddle-ai-fov = { workspace = true }
+bevy_flair = "0.7"
+bevy_input_focus = "0.18"
+bevy_ui_widgets = "0.18"
+saddle-pane = { git = "https://github.com/julien-blanchon/saddle-pane" }
 
 [lints]
 workspace = true

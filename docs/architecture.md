@@ -27,6 +27,7 @@ GridOpacityMap / FovTarget / FovOccluder / viewer components
   -> Prepare: ensure state components exist
   -> MarkDirty: watch changed transforms, config, targets, occluders, and grid resources
   -> Recompute: process dirty viewers up to the configured budget
+  -> accumulate or decay spatial awareness and emit detection/lost messages
   -> publish GridFovState / SpatialFovState only when the visible sets actually change
   -> DebugDraw: visualize cells, radii, cones, and visible rays when enabled
 ```
@@ -45,6 +46,8 @@ Viewers are marked dirty when:
 - a target or occluder is removed
 
 Dirty viewers stay dirty until the recompute system actually processes them. That is what makes per-frame budgets safe.
+
+One important exception exists for awareness-enabled spatial viewers: they are also marked dirty every update so their detection meters can rise, decay, and forget even when the world is otherwise static.
 
 ## Budgeting
 
@@ -78,6 +81,7 @@ They publish:
 - the remembered or explored set
 - the latest `entered`
 - the latest `exited`
+- per-target awareness entries for spatial viewers
 
 They do **not** update on every recompute if the visible sets stayed the same. This keeps downstream reaction systems stable.
 
@@ -119,7 +123,7 @@ The crate-local examples keep their animated entities as roots and update `Trans
 The crate verifies each layer separately:
 
 - unit tests for exact grid visibility, LOS corner cases, occlusion primitives, and dirty/budget behavior
-- standalone examples for grid memory, multi-viewer merging, 2D cones, and 3D cones
+- standalone examples for grid memory, multi-viewer merging, 2D cones, 3D cones, and stealth-style awareness buildup
 - a crate-local lab with BRP support and E2E scenarios for smoke, exploration memory, and cone occlusion
 
 ## Debug Gizmos
