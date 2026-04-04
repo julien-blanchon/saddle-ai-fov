@@ -1,7 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::Instant,
-};
+use std::collections::{HashMap, HashSet};
+
+use bevy::platform::time::Instant;
 
 use bevy::{
     color::palettes::css,
@@ -383,13 +382,50 @@ pub(crate) fn draw_debug(world: &mut World) {
                     let origin_2d = origin.truncate();
                     match viewer.shape {
                         SpatialShape::Radius { range } => {
+                            if debug.draw_filled_shapes {
+                                let fill = Color::srgba(1.0, 0.55, 0.15, 0.03);
+                                for frac in [0.33, 0.66] {
+                                    gizmos.circle_2d(origin_2d, range * frac, fill);
+                                }
+                            }
                             gizmos.circle_2d(origin_2d, range, Color::from(css::ORANGE));
+                            if viewer.near_override > 0.0 {
+                                gizmos.circle_2d(
+                                    origin_2d,
+                                    viewer.near_override,
+                                    Color::srgba(1.0, 0.85, 0.2, 0.35),
+                                );
+                            }
                         }
                         SpatialShape::Cone {
                             range,
                             half_angle_radians,
                         } => {
                             let rotation = forward.truncate().to_angle();
+
+                            if debug.draw_filled_shapes {
+                                let fill = Color::srgba(1.0, 0.55, 0.15, 0.06);
+                                let steps = 16u32;
+                                for i in 0..=steps {
+                                    let t = i as f32 / steps as f32;
+                                    let a = rotation - half_angle_radians
+                                        + t * 2.0 * half_angle_radians;
+                                    gizmos.line_2d(
+                                        origin_2d,
+                                        origin_2d + Vec2::from_angle(a) * range,
+                                        fill,
+                                    );
+                                }
+                                for frac in [0.33, 0.66] {
+                                    gizmos.arc_2d(
+                                        Isometry2d::new(origin_2d, Rot2::radians(rotation)),
+                                        half_angle_radians * 2.0,
+                                        range * frac,
+                                        fill,
+                                    );
+                                }
+                            }
+
                             gizmos.arc_2d(
                                 Isometry2d::new(origin_2d, Rot2::radians(rotation)),
                                 half_angle_radians * 2.0,
@@ -402,24 +438,49 @@ pub(crate) fn draw_debug(world: &mut World) {
                                 origin_2d + Vec2::from_angle(rotation + half_angle_radians) * range;
                             gizmos.line_2d(origin_2d, left, Color::from(css::ORANGE));
                             gizmos.line_2d(origin_2d, right, Color::from(css::ORANGE));
+
+                            if viewer.near_override > 0.0 {
+                                gizmos.circle_2d(
+                                    origin_2d,
+                                    viewer.near_override,
+                                    Color::srgba(1.0, 0.85, 0.2, 0.35),
+                                );
+                            }
                         }
                     }
                 }
                 SpatialDimension::Volumetric3d => match viewer.shape {
                     SpatialShape::Radius { range } => {
                         gizmos.sphere(origin, range, Color::srgba(1.0, 0.5, 0.1, 0.15));
+                        if viewer.near_override > 0.0 {
+                            gizmos.sphere(
+                                origin,
+                                viewer.near_override,
+                                Color::srgba(1.0, 0.85, 0.2, 0.15),
+                            );
+                        }
                     }
                     SpatialShape::Cone {
                         range,
                         half_angle_radians,
-                    } => draw_cone_3d(
-                        &mut gizmos,
-                        origin,
-                        forward,
-                        range,
-                        half_angle_radians,
-                        Color::from(css::ORANGE),
-                    ),
+                    } => {
+                        draw_cone_3d(
+                            &mut gizmos,
+                            origin,
+                            forward,
+                            range,
+                            half_angle_radians,
+                            Color::from(css::ORANGE),
+                            debug.draw_filled_shapes,
+                        );
+                        if viewer.near_override > 0.0 {
+                            gizmos.sphere(
+                                origin,
+                                viewer.near_override,
+                                Color::srgba(1.0, 0.85, 0.2, 0.15),
+                            );
+                        }
+                    }
                 },
             }
         }
@@ -819,6 +880,7 @@ fn draw_cone_3d(
     range: f32,
     half_angle_radians: f32,
     color: Color,
+    filled: bool,
 ) {
     let forward = forward.normalize_or_zero();
     if forward == Vec3::ZERO {
@@ -843,8 +905,26 @@ fn draw_cone_3d(
     };
     let bitangent = forward.cross(tangent).normalize();
 
-    for direction in [tangent, -tangent, bitangent, -bitangent] {
-        gizmos.line(origin, base_center + direction * base_radius, color);
+    let edge_count = 8;
+    for i in 0..edge_count {
+        let angle = std::f32::consts::TAU * i as f32 / edge_count as f32;
+        let dir = tangent * angle.cos() + bitangent * angle.sin();
+        // First edge in green to break symmetry and show rotation
+        let edge_color = if i == 0 {
+            Color::from(css::LIMEGREEN)
+        } else {
+            color
+        };
+        gizmos.line(origin, base_center + dir * base_radius, edge_color);
+    }
+
+    if filled {
+        let fill = color.with_alpha(0.06);
+        for frac in [0.33, 0.66] {
+            let mid = origin + forward * range * frac;
+            let r = range * frac * half_angle_radians.tan();
+            gizmos.circle(Isometry3d::new(mid, orientation), r, fill);
+        }
     }
 }
 

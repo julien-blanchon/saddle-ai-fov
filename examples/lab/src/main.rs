@@ -133,6 +133,7 @@ fn main() {
         enabled: true,
         draw_grid_cells: true,
         draw_view_shapes: true,
+        draw_filled_shapes: true,
         draw_occlusion_rays: true,
         max_grid_cells_per_viewer: 120,
     });

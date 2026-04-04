@@ -193,8 +193,8 @@ fn animate_viewers(
 
 fn sync_controls(
     pane: Res<MultiViewerPane>,
-    mut alpha: Single<&mut GridFov, With<ScoutAlpha>>,
-    mut beta: Single<&mut GridFov, With<ScoutBeta>>,
+    mut alpha: Single<&mut GridFov, (With<ScoutAlpha>, Without<ScoutBeta>)>,
+    mut beta: Single<&mut GridFov, (With<ScoutBeta>, Without<ScoutAlpha>)>,
 ) {
     if !pane.is_changed() {
         return;

@@ -9,6 +9,7 @@ pub struct FovDebugSettings {
     pub enabled: bool,
     pub draw_grid_cells: bool,
     pub draw_view_shapes: bool,
+    pub draw_filled_shapes: bool,
     pub draw_occlusion_rays: bool,
     pub max_grid_cells_per_viewer: usize,
 }
@@ -19,6 +20,7 @@ impl Default for FovDebugSettings {
             enabled: false,
             draw_grid_cells: true,
             draw_view_shapes: true,
+            draw_filled_shapes: true,
             draw_occlusion_rays: true,
             max_grid_cells_per_viewer: 96,
         }
