@@ -110,8 +110,10 @@ The API is intentionally open-ended. Consumers can keep the ECS integration and 
 | `basic_grid` | Minimal square-grid FOV with one moving viewer | `cargo run -p saddle-ai-fov --example basic_grid` |
 | `exploration_memory` | Demonstrates `visible_now` plus persistent explored cells | `cargo run -p saddle-ai-fov --example exploration_memory` |
 | `multi_viewers` | Merges multiple viewer states without coupling the viewers together | `cargo run -p saddle-ai-fov --example multi_viewers` |
-| `cone_2d` | Top-down cone checks with simple occluder primitives and live debug rays | `cargo run -p saddle-ai-fov --example cone_2d` |
-| `cone_3d` | 3D sentry vision with multi-sample targets and box occluders | `cargo run -p saddle-ai-fov --example cone_3d` |
+| `cone_2d` | Top-down cone checks with simple occluder primitives and live debug rays | `cargo run -p saddle-ai-fov-example-cone-2d` |
+| `cone_3d` | 3D sentry vision with multi-sample targets and box occluders | `cargo run -p saddle-ai-fov-example-cone-3d` |
+| `radius_2d` | Omnidirectional 2D detection radius with orbiting targets and occluders | `cargo run -p saddle-ai-fov-example-radius-2d` |
+| `layers` | Visibility layer filtering — two viewers see different target subsets | `cargo run -p saddle-ai-fov-example-layers` |
 | `stealth_detection` | Game-like stealth scene with awareness gain, focused vs peripheral vision, and perception modifiers | `cargo run -p saddle-ai-fov-example-stealth-detection` |
 | `saddle-ai-fov-lab` | Crate-local showcase with BRP and E2E hooks | `cargo run -p saddle-ai-fov-lab` |
 
@@ -161,3 +163,4 @@ uv run --project .codex/skills/bevy-brp/script brp extras shutdown
 - [Architecture](docs/architecture.md)
 - [Configuration](docs/configuration.md)
 - [Algorithm Tradeoffs](docs/algorithm-tradeoffs.md)
+- [Physics Integration](docs/physics-integration.md)

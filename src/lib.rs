@@ -22,7 +22,9 @@ pub use grid::{
     GridCornerPolicy, GridFovBackend, GridFovConfig, GridFovResult, GridMapSpec, GridOpacityMap,
     merge_grid_visibility,
 };
-pub use messages::{SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost};
+pub use messages::{
+    GridVisibilityChanged, SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost,
+};
 pub use resources::FovStats;
 pub use spatial::{
     OccluderShape, SpatialDimension, SpatialShape, SpatialVisibilityQuery, VisibilityLayer,
@@ -97,6 +99,7 @@ impl Plugin for FovPlugin {
         app.init_resource::<FovStats>()
             .init_resource::<FovDebugSettings>()
             .init_resource::<systems::FovRuntimeState>()
+            .add_message::<messages::GridVisibilityChanged>()
             .add_message::<SpatialAwarenessChanged>()
             .add_message::<SpatialTargetDetected>()
             .add_message::<SpatialTargetLost>()

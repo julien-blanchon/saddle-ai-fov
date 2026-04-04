@@ -23,7 +23,9 @@ use crate::{
     },
     debug::{FovDebugGizmos, FovDebugSettings},
     grid::GridOpacityMap,
-    messages::{SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost},
+    messages::{
+        GridVisibilityChanged, SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost,
+    },
     resources::FovStats,
     spatial::{
         SpatialDimension, SpatialShape, SpatialVisibilityQuery, VisibilityLayerMask, WorldOccluder,
@@ -217,6 +219,7 @@ pub(crate) fn recompute_viewers(
     occluders: Query<(&GlobalTransform, &FovOccluder)>,
     mut grid_states: Query<&mut GridFovState>,
     mut spatial_states: Query<&mut SpatialFovState>,
+    mut grid_visibility_changed: MessageWriter<GridVisibilityChanged>,
     mut awareness_changed: MessageWriter<SpatialAwarenessChanged>,
     mut target_detected: MessageWriter<SpatialTargetDetected>,
     mut target_lost: MessageWriter<SpatialTargetLost>,
@@ -273,6 +276,15 @@ pub(crate) fn recompute_viewers(
                 &mut grid_states,
                 &mut stats,
             );
+            if let Ok(state) = grid_states.get(entity) {
+                if !state.entered.is_empty() || !state.exited.is_empty() {
+                    grid_visibility_changed.write(GridVisibilityChanged {
+                        viewer: entity,
+                        entered: state.entered.clone(),
+                        exited: state.exited.clone(),
+                    });
+                }
+            }
         }
 
         if let Some(spatial_viewer) = spatial_viewer {

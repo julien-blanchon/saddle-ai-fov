@@ -8,6 +8,7 @@
 | `FovDebugSettings` | `enabled` | `false` | Master switch for debug drawing. |
 | `FovDebugSettings` | `draw_grid_cells` | `true` | Draw currently visible grid cells. |
 | `FovDebugSettings` | `draw_view_shapes` | `true` | Draw viewer radii and cone volumes. |
+| `FovDebugSettings` | `draw_filled_shapes` | `true` | Fill cone sectors with radial lines and inner arcs; add intermediate circles to 3D cones. |
 | `FovDebugSettings` | `draw_occlusion_rays` | `true` | Draw rays to currently visible targets. |
 | `FovDebugSettings` | `max_grid_cells_per_viewer` | `96` | Safety cap for grid-cell overlays in busy scenes. |
 

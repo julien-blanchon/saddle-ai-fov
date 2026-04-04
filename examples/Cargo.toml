@@ -6,6 +6,8 @@ members = [
     "multi_viewers",
     "cone_2d",
     "cone_3d",
+    "radius_2d",
+    "layers",
     "stealth_detection",
     "lab",
 ]

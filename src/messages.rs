@@ -3,6 +3,13 @@ use bevy::prelude::*;
 use crate::awareness::AwarenessLevel;
 
 #[derive(Message, Clone, Debug)]
+pub struct GridVisibilityChanged {
+    pub viewer: Entity,
+    pub entered: Vec<IVec2>,
+    pub exited: Vec<IVec2>,
+}
+
+#[derive(Message, Clone, Debug)]
 pub struct SpatialAwarenessChanged {
     pub viewer: Entity,
     pub target: Entity,
