@@ -52,14 +52,34 @@ pub enum SpatialDimension {
 
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 pub enum SpatialShape {
-    Radius { range: f32 },
-    Cone { range: f32, half_angle_radians: f32 },
+    Radius {
+        range: f32,
+    },
+    Cone {
+        range: f32,
+        half_angle_radians: f32,
+    },
+    /// Rectangular field of view oriented along the forward direction.
+    /// `depth` extends forward from the origin, `half_width` extends left/right
+    /// perpendicular to forward.  In 3D mode `half_height` adds vertical extent;
+    /// in 2D mode it is ignored.
+    Rect {
+        depth: f32,
+        half_width: f32,
+        half_height: f32,
+    },
 }
 
 impl SpatialShape {
     pub fn range(self) -> f32 {
         match self {
             Self::Radius { range } | Self::Cone { range, .. } => range.max(0.0),
+            Self::Rect {
+                depth, half_width, ..
+            } => {
+                // The maximum detection distance is from origin to the far corner.
+                (depth * depth + half_width * half_width).sqrt().max(0.0)
+            }
         }
     }
 }
@@ -100,6 +120,27 @@ impl SpatialVisibilityQuery {
             shape: SpatialShape::Cone {
                 range: range.max(0.0),
                 half_angle_radians: half_angle_radians.max(0.0),
+            },
+            near_override: 0.0,
+        }
+    }
+
+    pub fn rect(
+        origin: Vec3,
+        forward: Vec3,
+        depth: f32,
+        half_width: f32,
+        half_height: f32,
+        dimension: SpatialDimension,
+    ) -> Self {
+        Self {
+            origin,
+            forward,
+            dimension,
+            shape: SpatialShape::Rect {
+                depth: depth.max(0.0),
+                half_width: half_width.max(0.0),
+                half_height: half_height.max(0.0),
             },
             near_override: 0.0,
         }
@@ -215,6 +256,44 @@ fn sample_inside_shape(query: &SpatialVisibilityQuery, sample: Vec3, distance: f
             };
 
             direction.dot(forward) >= half_angle_radians.cos() - 0.0001
+        }
+        SpatialShape::Rect {
+            depth,
+            half_width,
+            half_height,
+        } => {
+            let Some(forward) = normalize_direction(query.dimension, query.forward) else {
+                return true;
+            };
+
+            let offset = sample - query.origin;
+
+            // Project onto local axes.  "forward" is depth, "right" is perpendicular.
+            let along = offset.dot(forward);
+            if along < 0.0 || along > depth.max(0.0) {
+                return false;
+            }
+
+            match query.dimension {
+                SpatialDimension::Planar2d => {
+                    let right = Vec3::new(-forward.y, forward.x, 0.0);
+                    let lateral = offset.dot(right).abs();
+                    lateral <= half_width.max(0.0)
+                }
+                SpatialDimension::Volumetric3d => {
+                    // Build a local right/up basis from forward.
+                    let up_hint = if forward.cross(Vec3::Y).length_squared() > 0.0001 {
+                        Vec3::Y
+                    } else {
+                        Vec3::X
+                    };
+                    let right = forward.cross(up_hint).normalize();
+                    let up = right.cross(forward).normalize();
+                    let lateral = offset.dot(right).abs();
+                    let vertical = offset.dot(up).abs();
+                    lateral <= half_width.max(0.0) && vertical <= half_height.max(0.0)
+                }
+            }
         }
     }
 }

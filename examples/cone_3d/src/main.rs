@@ -53,6 +53,8 @@ fn main() {
             draw_view_shapes: true,
             draw_filled_shapes: true,
             draw_occlusion_rays: true,
+            draw_blocked_rays: true,
+            draw_occluder_shapes: true,
             max_grid_cells_per_viewer: 0,
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -122,6 +124,14 @@ fn setup(
         })),
     ));
 
+    let sentry_body_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.82, 0.54, 0.26),
+        ..default()
+    });
+    let sentry_nose_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.30, 0.84, 0.95),
+        ..default()
+    });
     commands.spawn((
         Name::new("Sentry"),
         Sentry,
@@ -130,12 +140,18 @@ fn setup(
             .with_local_origin(Vec3::new(0.0, 18.0, 0.0))
             .with_near_override(46.0),
         Mesh3d(meshes.add(Capsule3d::new(16.0, 42.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.82, 0.54, 0.26),
-            ..default()
-        })),
+        MeshMaterial3d(sentry_body_material),
         Transform::from_xyz(-180.0, 24.0, 0.0),
         GlobalTransform::from_xyz(-180.0, 24.0, 0.0),
+        children![
+            // "Nose" indicator so you can see which way the sentry faces
+            (
+                Name::new("Sentry Nose"),
+                Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 20.0))),
+                MeshMaterial3d(sentry_nose_material),
+                Transform::from_xyz(0.0, 18.0, 22.0),
+            ),
+        ],
     ));
 
     commands.spawn((
@@ -174,6 +190,19 @@ fn setup(
             GlobalTransform::from_translation(position),
         ));
     }
+
+    commands.spawn((
+        Name::new("Example Instructions"),
+        Text::new(
+            "cone_3d: 3D cone with multi-sample targets and box occluders.\nControls: use the top-right pane to pause the sweep and tune cone, near override, and speed.",
+        ),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(18.0),
+            top: px(16.0),
+            ..default()
+        },
+    ));
 }
 
 fn animate_sentry(
@@ -190,10 +219,7 @@ fn animate_sentry(
     *sentry.1 = GlobalTransform::from(*sentry.0.as_ref());
 }
 
-fn sync_controls(
-    pane: Res<Cone3dPane>,
-    mut sentry: Single<&mut SpatialFov, With<Sentry>>,
-) {
+fn sync_controls(pane: Res<Cone3dPane>, mut sentry: Single<&mut SpatialFov, With<Sentry>>) {
     if !pane.is_changed() {
         return;
     }

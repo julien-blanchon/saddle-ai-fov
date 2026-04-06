@@ -4,8 +4,8 @@ use bevy::{ecs::schedule::ScheduleLabel, prelude::*};
 
 use super::*;
 use crate::{
-    AwarenessLevel, FovPlugin, SpatialAwarenessConfig,
-    components::{FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, SpatialFov},
+    FovPlugin, FovStimulusSource, SpatialStimulusConfig,
+    components::{FovOccluder, FovTarget, GridFov, SpatialFov},
     grid::{GridCornerPolicy, GridFovBackend, GridFovConfig, GridMapSpec, GridOpacityMap},
     spatial::{OccluderShape, VisibilityLayer, VisibilityLayerMask},
 };
@@ -205,7 +205,7 @@ fn no_render_app_debug_toggle_does_not_panic() {
 }
 
 #[test]
-fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
+fn stimulus_accumulates_and_then_forgets() {
     let mut app = App::new();
     app.insert_resource(Time::<()>::default());
     app.init_schedule(DeactivateSchedule);
@@ -214,10 +214,9 @@ fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
     let viewer = app
         .world_mut()
         .spawn((
-            SpatialFov::cone_2d(10.0, 0.8).with_awareness(SpatialAwarenessConfig {
+            SpatialFov::cone_2d(10.0, 0.8).with_stimulus(SpatialStimulusConfig {
                 gain_per_second: 2.0,
                 loss_per_second: 2.0,
-                alert_threshold: 0.5,
                 forget_after_seconds: 0.4,
                 ..default()
             }),
@@ -230,8 +229,8 @@ fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
         .world_mut()
         .spawn((
             FovTarget::default(),
-            FovPerceptionModifiers {
-                light_exposure: 1.4,
+            FovStimulusSource {
+                direct_visibility_scale: 1.4,
                 ..default()
             },
             Transform::from_xyz(3.0, 0.0, 0.0),
@@ -245,11 +244,11 @@ fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
         .world()
         .get::<SpatialFovState>(viewer)
         .expect("spatial state should exist");
-    let awareness = state
-        .awareness_of(target)
-        .expect("target should have awareness entry");
-    assert_eq!(awareness.level, AwarenessLevel::Alert);
-    assert!(awareness.awareness >= 0.5);
+    let stimulus = state
+        .stimulus_of(target)
+        .expect("target should have stimulus entry");
+    assert!(stimulus.currently_visible);
+    assert!(stimulus.signal >= 0.5);
 
     app.world_mut().entity_mut(target).insert((
         Transform::from_xyz(30.0, 0.0, 0.0),
@@ -262,13 +261,11 @@ fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
         .world()
         .get::<SpatialFovState>(viewer)
         .expect("spatial state should exist");
-    let awareness = state
-        .awareness_of(target)
-        .expect("target should still be remembered while searching");
-    assert!(matches!(
-        awareness.level,
-        AwarenessLevel::Searching | AwarenessLevel::Lost
-    ));
+    let stimulus = state
+        .stimulus_of(target)
+        .expect("target should still be remembered while signal decays");
+    assert!(!stimulus.currently_visible);
+    assert!(stimulus.signal <= 0.5);
 
     advance_time(&mut app, 0.5);
     app.update();
@@ -276,5 +273,5 @@ fn awareness_progresses_from_suspicious_to_alert_and_then_forgets() {
         .world()
         .get::<SpatialFovState>(viewer)
         .expect("spatial state should exist");
-    assert!(state.awareness_of(target).is_none());
+    assert!(state.stimulus_of(target).is_none());
 }

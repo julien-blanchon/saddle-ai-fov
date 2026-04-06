@@ -118,7 +118,9 @@ fn setup(mut commands: Commands, grid: Res<GridOpacityMap>) {
 
     commands.spawn((
         Name::new("Example Label"),
-        Text::new("basic_grid: recursive shadowcasting on a reusable GridOpacityMap"),
+        Text::new(
+            "basic_grid: recursive shadowcasting on a reusable GridOpacityMap.\nControls: use the top-right pane to pause motion and tune radius/speed.",
+        ),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),
@@ -149,10 +151,7 @@ fn animate_viewer(
     *viewer.1 = GlobalTransform::from_translation(position);
 }
 
-fn sync_controls(
-    pane: Res<BasicGridPane>,
-    mut viewer: Single<&mut GridFov, With<PrimaryViewer>>,
-) {
+fn sync_controls(pane: Res<BasicGridPane>, mut viewer: Single<&mut GridFov, With<PrimaryViewer>>) {
     if !pane.is_changed() {
         return;
     }
@@ -168,7 +167,10 @@ fn tint_tiles(
     apply_grid_visibility_colors(&grid, &viewer.visible_now, &viewer.explored, &mut tiles);
 }
 
-fn update_pane(viewer: Single<&GridFovState, With<PrimaryViewer>>, mut pane: ResMut<BasicGridPane>) {
+fn update_pane(
+    viewer: Single<&GridFovState, With<PrimaryViewer>>,
+    mut pane: ResMut<BasicGridPane>,
+) {
     pane.visible_cells = viewer.visible_now.len();
     pane.explored_cells = viewer.explored.len();
 }

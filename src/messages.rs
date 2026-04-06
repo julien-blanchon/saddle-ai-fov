@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::awareness::AwarenessLevel;
+use crate::stealth::StealthAwarenessLevel;
 
 #[derive(Message, Clone, Debug)]
 pub struct GridVisibilityChanged {
@@ -10,27 +10,49 @@ pub struct GridVisibilityChanged {
 }
 
 #[derive(Message, Clone, Debug)]
-pub struct SpatialAwarenessChanged {
+pub struct SpatialVisibilityChanged {
+    pub viewer: Entity,
+    pub entered: Vec<Entity>,
+    pub exited: Vec<Entity>,
+}
+
+#[derive(Message, Clone, Debug)]
+pub struct SpatialStimulusChanged {
     pub viewer: Entity,
     pub target: Entity,
-    pub previous_level: AwarenessLevel,
-    pub level: AwarenessLevel,
-    pub awareness: f32,
+    pub previous_signal: f32,
+    pub signal: f32,
+    pub visibility_score: f32,
+    pub indirect_signal: f32,
+    pub currently_visible: bool,
+    pub in_range: bool,
+    pub inside_shape: bool,
+    pub occluded: bool,
     pub last_known_position: Option<Vec3>,
 }
 
 #[derive(Message, Clone, Debug)]
-pub struct SpatialTargetDetected {
+pub struct StealthAwarenessChanged {
     pub viewer: Entity,
     pub target: Entity,
-    pub awareness: f32,
+    pub previous_level: StealthAwarenessLevel,
+    pub level: StealthAwarenessLevel,
+    pub signal: f32,
     pub last_known_position: Option<Vec3>,
 }
 
 #[derive(Message, Clone, Debug)]
-pub struct SpatialTargetLost {
+pub struct StealthTargetDetected {
     pub viewer: Entity,
     pub target: Entity,
-    pub awareness: f32,
+    pub signal: f32,
+    pub last_known_position: Option<Vec3>,
+}
+
+#[derive(Message, Clone, Debug)]
+pub struct StealthTargetLost {
+    pub viewer: Entity,
+    pub target: Entity,
+    pub signal: f32,
     pub last_known_position: Option<Vec3>,
 }

@@ -11,9 +11,10 @@ use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 use bevy_brp_extras::BrpExtrasPlugin;
 use saddle_ai_fov::{
-    FovDebugSettings, FovDirty, FovOccluder, FovPerceptionModifiers, FovPlugin, FovTarget,
-    GridFov, GridFovState, GridOpacityMap, OccluderShape, SpatialAwarenessConfig, SpatialFov,
-    SpatialFovState,
+    FovDebugSettings, FovDirty, FovOccluder, FovPlugin, FovStimulusSource, FovTarget, GridFov,
+    GridFovState, GridOpacityMap, OccluderShape, SpatialFov, SpatialFovState,
+    SpatialStimulusConfig, StealthAwarenessConfig, StealthAwarenessLevel, StealthAwarenessPlugin,
+    StealthAwarenessState,
 };
 use saddle_pane::prelude::*;
 use support::{GridCellSprite, apply_grid_visibility_colors, spawn_grid_tiles};
@@ -29,7 +30,7 @@ const GRID_PATH: &[IVec2] = &[
 ];
 const GRID_SPEED: f32 = 0.36;
 const FRONT_TARGET_NAME: &str = "Front Target";
-const AWARENESS_TARGET_NAME: &str = "Awareness Target";
+const PIPELINE_TARGET_NAME: &str = "Pipeline Target";
 pub const HIDDEN_TARGET_NAME: &str = "Hidden Target";
 
 #[derive(Component)]
@@ -48,7 +49,7 @@ struct TargetVisual;
 struct LabEntities {
     grid_viewer: Entity,
     guard: Entity,
-    awareness_target: Entity,
+    pipeline_target: Entity,
 }
 
 #[derive(Resource, Debug, Clone, Copy, Pane)]
@@ -114,11 +115,13 @@ pub struct LabDiagnostics {
     #[pane(monitor)]
     pub front_target_visible: bool,
     #[pane(monitor)]
-    pub front_target_awareness: f32,
+    pub front_target_signal: f32,
     #[pane(monitor)]
-    pub awareness_target_visible: bool,
+    pub pipeline_target_visible: bool,
     #[pane(monitor)]
-    pub awareness_target_awareness: f32,
+    pub pipeline_target_signal: f32,
+    #[pane(monitor)]
+    pub pipeline_target_alerted: bool,
     #[pane(monitor)]
     pub hidden_target_visible: bool,
 }
@@ -135,6 +138,8 @@ fn main() {
         draw_view_shapes: true,
         draw_filled_shapes: true,
         draw_occlusion_rays: true,
+        draw_blocked_rays: true,
+        draw_occluder_shapes: true,
         max_grid_cells_per_viewer: 120,
     });
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -154,7 +159,7 @@ fn main() {
     ));
     #[cfg(feature = "e2e")]
     app.add_plugins(e2e::FovLabE2EPlugin);
-    app.add_plugins(FovPlugin::default());
+    app.add_plugins((FovPlugin::default(), StealthAwarenessPlugin::default()));
     app.add_plugins((
         bevy_flair::FlairPlugin,
         bevy_input_focus::InputDispatchPlugin,
@@ -162,8 +167,8 @@ fn main() {
         bevy_input_focus::tab_navigation::TabNavigationPlugin,
         PanePlugin,
     ))
-        .register_pane::<LabControl>()
-        .register_pane::<LabDiagnostics>();
+    .register_pane::<LabControl>()
+    .register_pane::<LabDiagnostics>();
     app.add_systems(Startup, setup);
     app.add_systems(
         Update,
@@ -223,17 +228,17 @@ fn setup(
     let grid_viewer_position = support::grid_world_position(&grid.spec, GRID_PATH[0], 4.0);
     let grid_viewer = commands
         .spawn((
-        Name::new("Grid Viewer"),
-        LabGridViewer,
-        GridFov::new(4),
-        Sprite {
-            color: Color::srgb(0.93, 0.80, 0.28),
-            custom_size: Some(Vec2::splat(grid.spec.cell_size.x * 0.58)),
-            ..default()
-        },
-        Transform::from_translation(grid_viewer_position),
-        GlobalTransform::from_translation(grid_viewer_position),
-    ))
+            Name::new("Grid Viewer"),
+            LabGridViewer,
+            GridFov::new(4),
+            Sprite {
+                color: Color::srgb(0.93, 0.80, 0.28),
+                custom_size: Some(Vec2::splat(grid.spec.cell_size.x * 0.58)),
+                ..default()
+            },
+            Transform::from_translation(grid_viewer_position),
+            GlobalTransform::from_translation(grid_viewer_position),
+        ))
         .id();
 
     commands.spawn((
@@ -245,23 +250,25 @@ fn setup(
 
     let guard = commands
         .spawn((
-        Name::new("Guard"),
-        LabGuard,
-        SpatialFov::cone_2d(420.0, 0.56)
-            .with_near_override(42.0)
-            .with_awareness(SpatialAwarenessConfig {
+            Name::new("Guard"),
+            LabGuard,
+            SpatialFov::cone_2d(420.0, 0.56)
+                .with_near_override(42.0)
+                .with_stimulus(SpatialStimulusConfig {
+                    focused_half_angle_radians: 0.24,
+                    ..default()
+                }),
+            StealthAwarenessConfig {
                 alert_threshold: 0.8,
-                focused_half_angle_radians: 0.24,
+            },
+            Sprite {
+                color: Color::srgb(0.97, 0.58, 0.22),
+                custom_size: Some(Vec2::splat(32.0)),
                 ..default()
-            }),
-        Sprite {
-            color: Color::srgb(0.97, 0.58, 0.22),
-            custom_size: Some(Vec2::splat(32.0)),
-            ..default()
-        },
-        Transform::from_xyz(180.0, 0.0, 5.0),
-        GlobalTransform::from_xyz(180.0, 0.0, 5.0),
-    ))
+            },
+            Transform::from_xyz(180.0, 0.0, 5.0),
+            GlobalTransform::from_xyz(180.0, 0.0, 5.0),
+        ))
         .id();
 
     commands.spawn((
@@ -278,9 +285,9 @@ fn setup(
         GlobalTransform::from_xyz(420.0, 30.0, 2.0),
     ));
 
-    let mut awareness_target = None;
+    let mut pipeline_target = None;
     for (name, position) in [
-        (AWARENESS_TARGET_NAME, Vec3::new(340.0, 0.0, 3.0)),
+        (PIPELINE_TARGET_NAME, Vec3::new(340.0, 0.0, 3.0)),
         (FRONT_TARGET_NAME, Vec3::new(570.0, -150.0, 3.0)),
         ("Off-Angle Target", Vec3::new(320.0, 210.0, 3.0)),
         (HIDDEN_TARGET_NAME, Vec3::new(565.0, 120.0, 3.0)),
@@ -298,24 +305,24 @@ fn setup(
             GlobalTransform::from_translation(position),
         ));
 
-        if name == AWARENESS_TARGET_NAME {
-            entity.insert(FovPerceptionModifiers {
-                light_exposure: 1.4,
-                awareness_gain_multiplier: 1.6,
+        if name == PIPELINE_TARGET_NAME {
+            entity.insert(FovStimulusSource {
+                direct_visibility_scale: 1.4,
+                signal_gain_multiplier: 1.6,
                 ..default()
             });
         }
 
         let entity = entity.id();
-        if name == AWARENESS_TARGET_NAME {
-            awareness_target = Some(entity);
+        if name == PIPELINE_TARGET_NAME {
+            pipeline_target = Some(entity);
         }
     }
 
     commands.insert_resource(LabEntities {
         grid_viewer,
         guard,
-        awareness_target: awareness_target.expect("awareness target should exist"),
+        pipeline_target: pipeline_target.expect("pipeline target should exist"),
     });
 
     commands.spawn((
@@ -370,7 +377,7 @@ fn animate_guard(
 fn sync_lab_settings(
     control: Res<LabControl>,
     mut grid_viewer: Single<&mut GridFov, With<LabGridViewer>>,
-    mut guard: Single<&mut SpatialFov, With<LabGuard>>,
+    mut guard: Single<(&mut SpatialFov, &mut StealthAwarenessConfig), With<LabGuard>>,
 ) {
     if !control.is_changed() {
         return;
@@ -378,13 +385,13 @@ fn sync_lab_settings(
 
     grid_viewer.config.radius = control.grid_radius.max(0);
 
-    guard.shape = saddle_ai_fov::SpatialShape::Cone {
+    guard.0.shape = saddle_ai_fov::SpatialShape::Cone {
         range: control.guard_range.max(0.0),
         half_angle_radians: control.guard_half_angle.max(0.0),
     };
-    guard.near_override = control.near_override.max(0.0);
-    guard.awareness.alert_threshold = control.alert_threshold.clamp(0.0, guard.awareness.max_awareness);
-    guard.awareness.focused_half_angle_radians = control.focused_half_angle.max(0.0);
+    guard.0.near_override = control.near_override.max(0.0);
+    guard.0.stimulus.focused_half_angle_radians = control.focused_half_angle.max(0.0);
+    guard.1.alert_threshold = control.alert_threshold;
 }
 
 fn tint_grid(
@@ -412,7 +419,8 @@ fn tint_targets(
 
 fn update_diagnostics(
     grid_viewer: Single<&GridFovState, With<LabGridViewer>>,
-    guard: Single<&SpatialFovState, With<LabGuard>>,
+    guard_visibility: Single<&SpatialFovState, With<LabGuard>>,
+    guard_stealth: Single<&StealthAwarenessState, With<LabGuard>>,
     target_names: Query<(Entity, &Name), With<TargetVisual>>,
     mut diagnostics: ResMut<LabDiagnostics>,
 ) {
@@ -420,27 +428,33 @@ fn update_diagnostics(
     diagnostics.grid_explored_cells = grid_viewer.explored.len();
     diagnostics.memory_sample_visible = grid_viewer.visible_now.contains(&MEMORY_SAMPLE_CELL);
     diagnostics.memory_sample_explored = grid_viewer.explored.contains(&MEMORY_SAMPLE_CELL);
-    diagnostics.guard_visible_targets = guard.visible_now.len();
-    diagnostics.remembered_targets = guard.remembered.len();
+    diagnostics.guard_visible_targets = guard_visibility.visible_now.len();
+    diagnostics.remembered_targets = guard_visibility.remembered.len();
     diagnostics.front_target_visible = false;
-    diagnostics.front_target_awareness = 0.0;
-    diagnostics.awareness_target_visible = false;
-    diagnostics.awareness_target_awareness = 0.0;
+    diagnostics.front_target_signal = 0.0;
+    diagnostics.pipeline_target_visible = false;
+    diagnostics.pipeline_target_signal = 0.0;
+    diagnostics.pipeline_target_alerted = false;
     diagnostics.hidden_target_visible = false;
 
     for (entity, name) in &target_names {
-        if name.as_str() == AWARENESS_TARGET_NAME {
-            diagnostics.awareness_target_visible = guard.visible_now.contains(&entity);
-            diagnostics.awareness_target_awareness =
-                guard.awareness_of(entity).map_or(0.0, |entry| entry.awareness);
+        if name.as_str() == PIPELINE_TARGET_NAME {
+            diagnostics.pipeline_target_visible = guard_visibility.visible_now.contains(&entity);
+            diagnostics.pipeline_target_signal = guard_visibility
+                .stimulus_of(entity)
+                .map_or(0.0, |entry| entry.signal);
+            diagnostics.pipeline_target_alerted = guard_stealth
+                .awareness_of(entity)
+                .is_some_and(|entry| entry.level == StealthAwarenessLevel::Alert);
         }
         if name.as_str() == FRONT_TARGET_NAME {
-            diagnostics.front_target_visible = guard.visible_now.contains(&entity);
-            diagnostics.front_target_awareness =
-                guard.awareness_of(entity).map_or(0.0, |entry| entry.awareness);
+            diagnostics.front_target_visible = guard_visibility.visible_now.contains(&entity);
+            diagnostics.front_target_signal = guard_visibility
+                .stimulus_of(entity)
+                .map_or(0.0, |entry| entry.signal);
         }
         if name.as_str() == HIDDEN_TARGET_NAME {
-            diagnostics.hidden_target_visible = guard.visible_now.contains(&entity);
+            diagnostics.hidden_target_visible = guard_visibility.visible_now.contains(&entity);
         }
     }
 }
@@ -452,7 +466,8 @@ fn update_overlay(
     overlay.0 = format!(
         "fov lab\n\
          left: recursive grid FOV + exploration memory\n\
-         right: cone visibility + generic occluder primitives\n\
+         right: visibility -> neutral stimulus -> stealth state\n\
+         controls: top-right pane pauses motion, rotates the guard, and tunes cone/stimulus thresholds\n\
          visible cells: {}\n\
          explored cells: {}\n\
          guard targets: {}\n\
@@ -497,9 +512,9 @@ pub fn set_guard_angle(world: &mut World, angle: f32) {
     ));
 }
 
-pub fn awareness_target_awareness(world: &World) -> Option<(saddle_ai_fov::AwarenessLevel, f32)> {
+pub fn pipeline_target_state(world: &World) -> Option<(StealthAwarenessLevel, f32)> {
     let entities = world.get_resource::<LabEntities>()?;
-    let state = world.get::<SpatialFovState>(entities.guard)?;
-    let entry = state.awareness_of(entities.awareness_target)?;
-    Some((entry.level, entry.awareness))
+    let state = world.get::<StealthAwarenessState>(entities.guard)?;
+    let entry = state.awareness_of(entities.pipeline_target)?;
+    Some((entry.level, entry.signal))
 }

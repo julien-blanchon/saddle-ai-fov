@@ -99,3 +99,90 @@ fn multi_sample_target_is_visible_when_any_sample_is_clear() {
     assert_eq!(result.visible_sample_index, Some(1));
     assert_eq!(result.rays_cast, 2);
 }
+
+#[test]
+fn rect_2d_target_inside_box_is_visible() {
+    let query = SpatialVisibilityQuery::rect(
+        Vec3::ZERO,
+        Vec3::X,
+        100.0,
+        50.0,
+        0.0,
+        SpatialDimension::Planar2d,
+    );
+    // Directly ahead, well within bounds
+    let result = evaluate_visibility(&query, &[Vec3::new(60.0, 20.0, 0.0)], |_, _| false);
+    assert!(result.in_range);
+    assert!(result.inside_shape);
+    assert!(result.visible);
+}
+
+#[test]
+fn rect_2d_target_outside_width_is_not_visible() {
+    let query = SpatialVisibilityQuery::rect(
+        Vec3::ZERO,
+        Vec3::X,
+        100.0,
+        50.0,
+        0.0,
+        SpatialDimension::Planar2d,
+    );
+    // Laterally outside the half_width
+    let result = evaluate_visibility(&query, &[Vec3::new(50.0, 80.0, 0.0)], |_, _| false);
+    assert!(result.in_range); // within bounding range
+    assert!(!result.inside_shape);
+    assert!(!result.visible);
+}
+
+#[test]
+fn rect_2d_target_behind_origin_is_not_visible() {
+    let query = SpatialVisibilityQuery::rect(
+        Vec3::ZERO,
+        Vec3::X,
+        100.0,
+        50.0,
+        0.0,
+        SpatialDimension::Planar2d,
+    );
+    // Behind the origin
+    let result = evaluate_visibility(&query, &[Vec3::new(-30.0, 10.0, 0.0)], |_, _| false);
+    assert!(!result.inside_shape);
+    assert!(!result.visible);
+}
+
+#[test]
+fn rect_2d_target_beyond_depth_is_not_visible() {
+    let query = SpatialVisibilityQuery::rect(
+        Vec3::ZERO,
+        Vec3::X,
+        100.0,
+        50.0,
+        0.0,
+        SpatialDimension::Planar2d,
+    );
+    // Beyond the depth
+    let result = evaluate_visibility(&query, &[Vec3::new(120.0, 10.0, 0.0)], |_, _| false);
+    assert!(!result.inside_shape);
+    assert!(!result.visible);
+}
+
+#[test]
+fn rect_3d_respects_height_bounds() {
+    let query = SpatialVisibilityQuery::rect(
+        Vec3::ZERO,
+        Vec3::Z,
+        100.0,
+        40.0,
+        30.0,
+        SpatialDimension::Volumetric3d,
+    );
+    // Within all bounds
+    let inside = evaluate_visibility(&query, &[Vec3::new(10.0, 20.0, 50.0)], |_, _| false);
+    assert!(inside.inside_shape);
+    assert!(inside.visible);
+
+    // Above the half_height
+    let above = evaluate_visibility(&query, &[Vec3::new(0.0, 50.0, 50.0)], |_, _| false);
+    assert!(!above.inside_shape);
+    assert!(!above.visible);
+}

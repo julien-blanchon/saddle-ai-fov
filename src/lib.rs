@@ -1,5 +1,4 @@
 mod algorithms;
-mod awareness;
 mod components;
 mod config;
 mod debug;
@@ -7,13 +6,14 @@ mod grid;
 mod messages;
 mod resources;
 mod spatial;
+mod stealth;
+mod stimulus;
 mod systems;
 
 pub use crate::algorithms::los::{has_grid_line_of_sight, supercover_line};
 pub use crate::algorithms::shadowcasting::compute_grid_fov;
-pub use awareness::{AwarenessLevel, SpatialAwarenessConfig, SpatialAwarenessEntry};
 pub use components::{
-    FovDirty, FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, GridFovState, SpatialFov,
+    FovDirty, FovOccluder, FovStimulusSource, FovTarget, GridFov, GridFovState, SpatialFov,
     SpatialFovState,
 };
 pub use config::FovRuntimeConfig;
@@ -23,7 +23,8 @@ pub use grid::{
     merge_grid_visibility,
 };
 pub use messages::{
-    GridVisibilityChanged, SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost,
+    GridVisibilityChanged, SpatialStimulusChanged, SpatialVisibilityChanged,
+    StealthAwarenessChanged, StealthTargetDetected, StealthTargetLost,
 };
 pub use resources::FovStats;
 pub use spatial::{
@@ -31,6 +32,11 @@ pub use spatial::{
     VisibilityLayerMask, VisibilityTestResult, WorldOccluder, evaluate_visibility,
     merge_spatial_visibility, occluded_by_any,
 };
+pub use stealth::{
+    StealthAwarenessConfig, StealthAwarenessEntry, StealthAwarenessLevel, StealthAwarenessPlugin,
+    StealthAwarenessState, StealthAwarenessSystems,
+};
+pub use stimulus::{SpatialStimulusConfig, SpatialStimulusEntry};
 
 use bevy::{
     app::PostStartup,
@@ -100,14 +106,13 @@ impl Plugin for FovPlugin {
             .init_resource::<FovDebugSettings>()
             .init_resource::<systems::FovRuntimeState>()
             .add_message::<messages::GridVisibilityChanged>()
-            .add_message::<SpatialAwarenessChanged>()
-            .add_message::<SpatialTargetDetected>()
-            .add_message::<SpatialTargetLost>()
-            .register_type::<AwarenessLevel>()
+            .add_message::<SpatialStimulusChanged>()
+            .add_message::<SpatialVisibilityChanged>()
+            .add_message::<SpatialStimulusChanged>()
             .register_type::<FovDebugSettings>()
             .register_type::<FovDirty>()
             .register_type::<FovOccluder>()
-            .register_type::<FovPerceptionModifiers>()
+            .register_type::<FovStimulusSource>()
             .register_type::<FovTarget>()
             .register_type::<FovRuntimeConfig>()
             .register_type::<FovStats>()
@@ -119,12 +124,12 @@ impl Plugin for FovPlugin {
             .register_type::<GridMapSpec>()
             .register_type::<GridOpacityMap>()
             .register_type::<OccluderShape>()
-            .register_type::<SpatialAwarenessConfig>()
-            .register_type::<SpatialAwarenessEntry>()
             .register_type::<SpatialDimension>()
             .register_type::<SpatialFov>()
             .register_type::<SpatialFovState>()
             .register_type::<SpatialShape>()
+            .register_type::<SpatialStimulusConfig>()
+            .register_type::<SpatialStimulusEntry>()
             .register_type::<SpatialVisibilityQuery>()
             .register_type::<VisibilityLayer>()
             .register_type::<VisibilityLayerMask>()

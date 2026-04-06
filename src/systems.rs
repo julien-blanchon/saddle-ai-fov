@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::platform::time::Instant;
-
 use bevy::{
     color::palettes::css,
     ecs::system::SystemState,
@@ -13,24 +12,19 @@ use bevy::{
 use crate::{
     FovRuntimeConfig,
     algorithms::shadowcasting::compute_grid_fov,
-    awareness::{
-        AwarenessLevel, SpatialAwarenessEntry, classify_awareness, should_forget_target,
-        visibility_score_for_sample,
-    },
     components::{
-        FovDirty, FovOccluder, FovPerceptionModifiers, FovTarget, GridFov, GridFovState,
-        SpatialFov, SpatialFovState,
+        FovDirty, FovOccluder, FovStimulusSource, FovTarget, GridFov, GridFovState, SpatialFov,
+        SpatialFovState,
     },
     debug::{FovDebugGizmos, FovDebugSettings},
     grid::GridOpacityMap,
-    messages::{
-        GridVisibilityChanged, SpatialAwarenessChanged, SpatialTargetDetected, SpatialTargetLost,
-    },
+    messages::{GridVisibilityChanged, SpatialStimulusChanged, SpatialVisibilityChanged},
     resources::FovStats,
     spatial::{
-        SpatialDimension, SpatialShape, SpatialVisibilityQuery, VisibilityLayerMask, WorldOccluder,
-        evaluate_visibility, occluded_by_any,
+        OccluderShape, SpatialDimension, SpatialShape, SpatialVisibilityQuery, VisibilityLayerMask,
+        WorldOccluder, evaluate_visibility, occluded_by_any,
     },
+    stimulus::{SpatialStimulusEntry, should_forget_target, visibility_score_for_sample},
 };
 
 #[derive(Default, Resource, Debug)]
@@ -62,19 +56,17 @@ pub(crate) fn deactivate_runtime(
         commands.entity(entity).remove::<FovDirty>();
 
         if let Ok(mut state) = grid_states.get_mut(entity) {
-            if !state.visible_now.is_empty() {
-                state.exited = state.visible_now.clone();
-                state.visible_now.clear();
-            }
+            state.entered.clear();
+            state.exited = state.visible_now.clone();
+            state.visible_now.clear();
         }
 
         if let Ok(mut state) = spatial_states.get_mut(entity) {
-            if !state.visible_now.is_empty() {
-                state.exited = state.visible_now.clone();
-                state.visible_now.clear();
-            }
-            state.awareness.clear();
+            state.entered.clear();
+            state.exited = state.visible_now.clone();
+            state.visible_now.clear();
             state.remembered.clear();
+            state.stimuli.clear();
         }
     }
 }
@@ -145,6 +137,7 @@ pub(crate) fn mark_viewers_dirty(
         (),
         Or<(
             Changed<FovTarget>,
+            Changed<FovStimulusSource>,
             Changed<Transform>,
             Changed<GlobalTransform>,
         )>,
@@ -158,9 +151,10 @@ pub(crate) fn mark_viewers_dirty(
         )>,
     >,
     mut removed_targets: RemovedComponents<FovTarget>,
+    mut removed_stimulus_sources: RemovedComponents<FovStimulusSource>,
     mut removed_occluders: RemovedComponents<FovOccluder>,
     all_viewers: Query<Entity, Or<(With<GridFov>, With<SpatialFov>)>>,
-    awareness_viewers: Query<(Entity, &SpatialFov)>,
+    stimulus_viewers: Query<(Entity, &SpatialFov)>,
     dirty_viewers: Query<Entity, With<FovDirty>>,
     mut stats: ResMut<FovStats>,
 ) {
@@ -170,6 +164,7 @@ pub(crate) fn mark_viewers_dirty(
         || !changed_targets.is_empty()
         || !changed_occluders.is_empty()
         || removed_targets.read().next().is_some()
+        || removed_stimulus_sources.read().next().is_some()
         || removed_occluders.read().next().is_some();
 
     if global_dirty {
@@ -184,10 +179,9 @@ pub(crate) fn mark_viewers_dirty(
         }
     }
 
-    // Awareness-driven detection and forgetting are time-based, so these viewers
-    // must continue recomputing even when no transforms or occluders changed.
-    for (entity, viewer) in &awareness_viewers {
-        if viewer.awareness.enabled {
+    // Numeric stimulus accumulation and forgetting are time-based.
+    for (entity, viewer) in &stimulus_viewers {
+        if viewer.stimulus.enabled {
             commands.entity(entity).insert(FovDirty);
             pending_dirty.insert(entity);
         }
@@ -214,15 +208,14 @@ pub(crate) fn recompute_viewers(
         Entity,
         &GlobalTransform,
         &FovTarget,
-        Option<&FovPerceptionModifiers>,
+        Option<&FovStimulusSource>,
     )>,
     occluders: Query<(&GlobalTransform, &FovOccluder)>,
     mut grid_states: Query<&mut GridFovState>,
     mut spatial_states: Query<&mut SpatialFovState>,
     mut grid_visibility_changed: MessageWriter<GridVisibilityChanged>,
-    mut awareness_changed: MessageWriter<SpatialAwarenessChanged>,
-    mut target_detected: MessageWriter<SpatialTargetDetected>,
-    mut target_lost: MessageWriter<SpatialTargetLost>,
+    mut spatial_visibility_changed: MessageWriter<SpatialVisibilityChanged>,
+    mut stimulus_changed: MessageWriter<SpatialStimulusChanged>,
     mut stats: ResMut<FovStats>,
 ) {
     let start = Instant::now();
@@ -230,11 +223,11 @@ pub(crate) fn recompute_viewers(
     let target_samples: Vec<_> = targets
         .iter()
         .filter(|(_, _, target, _)| target.enabled)
-        .map(|(entity, transform, target, modifiers)| {
+        .map(|(entity, transform, target, stimulus_source)| {
             (
                 entity,
                 target.layers,
-                modifiers.copied().unwrap_or_default(),
+                stimulus_source.copied().unwrap_or_default(),
                 target
                     .sample_points
                     .iter()
@@ -296,9 +289,8 @@ pub(crate) fn recompute_viewers(
                 &target_samples,
                 &occluder_samples,
                 &mut spatial_states,
-                &mut awareness_changed,
-                &mut target_detected,
-                &mut target_lost,
+                &mut spatial_visibility_changed,
+                &mut stimulus_changed,
                 &mut stats,
             );
         }
@@ -332,7 +324,8 @@ type DebugDrawState<'w, 's> = SystemState<(
             &'static SpatialFovState,
         ),
     >,
-    Query<'w, 's, &'static GlobalTransform, With<FovTarget>>,
+    Query<'w, 's, (Entity, &'static GlobalTransform), With<FovTarget>>,
+    Query<'w, 's, (&'static GlobalTransform, &'static FovOccluder)>,
 )>;
 
 pub(crate) fn draw_debug(world: &mut World) {
@@ -341,7 +334,7 @@ pub(crate) fn draw_debug(world: &mut World) {
     }
 
     let mut state: DebugDrawState<'_, '_> = SystemState::new(world);
-    let (debug, grid_map, mut gizmos, grid_viewers, spatial_viewers, targets) =
+    let (debug, grid_map, mut gizmos, grid_viewers, spatial_viewers, targets, occluders) =
         state.get_mut(world);
 
     if debug.draw_grid_cells {
@@ -459,6 +452,44 @@ pub(crate) fn draw_debug(world: &mut World) {
                                 );
                             }
                         }
+                        SpatialShape::Rect {
+                            depth, half_width, ..
+                        } => {
+                            let fwd_2d = forward.truncate().normalize_or_zero();
+                            let right_2d = Vec2::new(-fwd_2d.y, fwd_2d.x);
+                            let far = origin_2d + fwd_2d * depth;
+                            let corners = [
+                                origin_2d - right_2d * half_width,
+                                origin_2d + right_2d * half_width,
+                                far + right_2d * half_width,
+                                far - right_2d * half_width,
+                            ];
+                            let outline_color = Color::from(css::ORANGE);
+                            for i in 0..4 {
+                                gizmos.line_2d(corners[i], corners[(i + 1) % 4], outline_color);
+                            }
+                            gizmos.line_2d(origin_2d, far, outline_color);
+
+                            if debug.draw_filled_shapes {
+                                let fill = Color::srgba(1.0, 0.55, 0.15, 0.06);
+                                for frac in [0.33, 0.66] {
+                                    let mid = origin_2d + fwd_2d * depth * frac;
+                                    gizmos.line_2d(
+                                        mid - right_2d * half_width,
+                                        mid + right_2d * half_width,
+                                        fill,
+                                    );
+                                }
+                            }
+
+                            if viewer.near_override > 0.0 {
+                                gizmos.circle_2d(
+                                    origin_2d,
+                                    viewer.near_override,
+                                    Color::srgba(1.0, 0.85, 0.2, 0.35),
+                                );
+                            }
+                        }
                     }
                 }
                 SpatialDimension::Volumetric3d => match viewer.shape {
@@ -493,18 +524,107 @@ pub(crate) fn draw_debug(world: &mut World) {
                             );
                         }
                     }
+                    SpatialShape::Rect {
+                        depth,
+                        half_width,
+                        half_height,
+                    } => {
+                        draw_rect_3d(
+                            &mut gizmos,
+                            origin,
+                            forward,
+                            depth,
+                            half_width,
+                            half_height,
+                            Color::from(css::ORANGE),
+                            debug.draw_filled_shapes,
+                        );
+                        if viewer.near_override > 0.0 {
+                            gizmos.sphere(
+                                origin,
+                                viewer.near_override,
+                                Color::srgba(1.0, 0.85, 0.2, 0.15),
+                            );
+                        }
+                    }
                 },
             }
         }
 
-        if debug.draw_occlusion_rays {
-            for entity in &state.visible_now {
-                if let Ok(target_transform) = targets.get(*entity) {
-                    gizmos.line(
-                        origin,
-                        target_transform.translation(),
-                        Color::from(css::LIME),
-                    );
+        if debug.draw_occlusion_rays || debug.draw_blocked_rays {
+            for (target_entity, target_transform) in &targets {
+                let target_pos = target_transform.translation();
+                if state.visible_now.contains(&target_entity) {
+                    if debug.draw_occlusion_rays {
+                        gizmos.line(origin, target_pos, Color::from(css::LIME));
+                    }
+                } else if debug.draw_blocked_rays {
+                    let dist = match viewer.dimension {
+                        SpatialDimension::Planar2d => {
+                            origin.truncate().distance(target_pos.truncate())
+                        }
+                        SpatialDimension::Volumetric3d => origin.distance(target_pos),
+                    };
+                    if dist <= viewer.shape.range() {
+                        gizmos.line(origin, target_pos, Color::srgba(0.85, 0.20, 0.15, 0.35));
+                    }
+                }
+            }
+        }
+    }
+
+    if debug.draw_occluder_shapes {
+        for (occ_transform, occluder) in &occluders {
+            if !occluder.enabled {
+                continue;
+            }
+            let pos = occ_transform.transform_point(occluder.local_offset);
+            let rot = occ_transform.to_scale_rotation_translation().1;
+            let outline = Color::srgba(0.65, 0.30, 0.80, 0.55);
+            match occluder.shape {
+                OccluderShape::Disc2d { radius } => {
+                    gizmos.circle_2d(pos.truncate(), radius, outline);
+                }
+                OccluderShape::Rect2d { half_extents } => {
+                    let fwd = rot * Vec3::X;
+                    let right2d = Vec2::new(-fwd.y, fwd.x);
+                    let fwd2d = Vec2::new(fwd.x, fwd.y);
+                    let center = pos.truncate();
+                    let corners = [
+                        center + fwd2d * half_extents.y + right2d * half_extents.x,
+                        center + fwd2d * half_extents.y - right2d * half_extents.x,
+                        center - fwd2d * half_extents.y - right2d * half_extents.x,
+                        center - fwd2d * half_extents.y + right2d * half_extents.x,
+                    ];
+                    for i in 0..4 {
+                        gizmos.line_2d(corners[i], corners[(i + 1) % 4], outline);
+                    }
+                }
+                OccluderShape::Sphere { radius } => {
+                    gizmos.sphere(pos, radius, outline);
+                }
+                OccluderShape::Box { half_extents } => {
+                    let he = half_extents;
+                    let local_corners = [
+                        Vec3::new(-he.x, -he.y, -he.z),
+                        Vec3::new(he.x, -he.y, -he.z),
+                        Vec3::new(he.x, he.y, -he.z),
+                        Vec3::new(-he.x, he.y, -he.z),
+                        Vec3::new(-he.x, -he.y, he.z),
+                        Vec3::new(he.x, -he.y, he.z),
+                        Vec3::new(he.x, he.y, he.z),
+                        Vec3::new(-he.x, he.y, he.z),
+                    ];
+                    let world: Vec<Vec3> = local_corners.iter().map(|c| pos + rot * *c).collect();
+                    for i in 0..4 {
+                        gizmos.line(world[i], world[(i + 1) % 4], outline);
+                    }
+                    for i in 4..8 {
+                        gizmos.line(world[i], world[4 + (i - 4 + 1) % 4], outline);
+                    }
+                    for i in 0..4 {
+                        gizmos.line(world[i], world[i + 4], outline);
+                    }
                 }
             }
         }
@@ -553,25 +673,34 @@ fn update_spatial_viewer(
     transform: &GlobalTransform,
     viewer: &SpatialFov,
     delta_seconds: f32,
-    target_samples: &[(
-        Entity,
-        VisibilityLayerMask,
-        FovPerceptionModifiers,
-        Vec<Vec3>,
-    )],
+    target_samples: &[(Entity, VisibilityLayerMask, FovStimulusSource, Vec<Vec3>)],
     occluders: &[(VisibilityLayerMask, WorldOccluder)],
     spatial_states: &mut Query<&mut SpatialFovState>,
-    awareness_changed: &mut MessageWriter<SpatialAwarenessChanged>,
-    target_detected: &mut MessageWriter<SpatialTargetDetected>,
-    target_lost: &mut MessageWriter<SpatialTargetLost>,
+    spatial_visibility_changed: &mut MessageWriter<SpatialVisibilityChanged>,
+    stimulus_changed: &mut MessageWriter<SpatialStimulusChanged>,
     stats: &mut FovStats,
 ) {
     let Ok(mut state) = spatial_states.get_mut(entity) else {
         return;
     };
 
+    let previous_stimuli: HashMap<_, _> = state
+        .stimuli
+        .iter()
+        .cloned()
+        .map(|entry| (entry.entity, entry))
+        .collect();
+
     if !viewer.enabled {
         publish_spatial_state(&mut state, Vec::new(), Vec::new(), Vec::new());
+        if !state.entered.is_empty() || !state.exited.is_empty() {
+            spatial_visibility_changed.write(SpatialVisibilityChanged {
+                viewer: entity,
+                entered: state.entered.clone(),
+                exited: state.exited.clone(),
+            });
+        }
+        emit_stimulus_messages(entity, &previous_stimuli, &state.stimuli, stimulus_changed);
         return;
     }
 
@@ -586,20 +715,14 @@ fn update_spatial_viewer(
     };
 
     let mut visible_now = Vec::new();
-    let previous_awareness: HashMap<_, _> = state
-        .awareness
-        .iter()
-        .cloned()
-        .map(|entry| (entry.entity, entry))
-        .collect();
-    let mut next_awareness = Vec::new();
+    let mut next_stimuli = Vec::new();
     let relevant_occluders: Vec<_> = occluders
         .iter()
         .filter(|(occluder_layers, _)| viewer.layers.overlaps(*occluder_layers))
         .map(|(_, occluder)| *occluder)
         .collect();
 
-    for (target_entity, layers, modifiers, samples) in target_samples {
+    for (target_entity, layers, source, samples) in target_samples {
         if !viewer.layers.overlaps(*layers) {
             continue;
         }
@@ -614,38 +737,26 @@ fn update_spatial_viewer(
             visible_now.push(*target_entity);
         }
 
-        if let Some(entry) = update_awareness_entry(
+        if let Some(entry) = update_stimulus_entry(
             *target_entity,
             viewer,
             &query,
-            *modifiers,
+            *source,
             &result,
             delta_seconds,
-            previous_awareness.get(target_entity).cloned(),
+            previous_stimuli.get(target_entity).cloned(),
         ) {
-            next_awareness.push(entry);
+            next_stimuli.push(entry);
         }
     }
 
     visible_now.sort_by_key(|entity| entity.index());
     visible_now.dedup();
-    next_awareness.sort_by_key(|entry| entry.entity.index());
-    let remembered_now = if !viewer.awareness.enabled {
-        if viewer.remember_seen_targets {
-            let mut remembered = state.remembered.clone();
-            remembered.extend(visible_now.iter().copied());
-            remembered.sort_by_key(|entity| entity.index());
-            remembered.dedup();
-            remembered
-        } else {
-            visible_now.clone()
-        }
-    } else if viewer.remember_seen_targets {
-        let mut remembered: Vec<_> = next_awareness
-            .iter()
-            .filter(|entry| entry.currently_visible || entry.last_seen_seconds_ago.is_some())
-            .map(|entry| entry.entity)
-            .collect();
+    next_stimuli.sort_by_key(|entry| entry.entity.index());
+
+    let remembered_now = if viewer.remember_seen_targets {
+        let mut remembered = state.remembered.clone();
+        remembered.extend(visible_now.iter().copied());
         remembered.sort_by_key(|entity| entity.index());
         remembered.dedup();
         remembered
@@ -653,109 +764,102 @@ fn update_spatial_viewer(
         visible_now.clone()
     };
 
-    emit_awareness_messages(
-        entity,
-        &previous_awareness,
-        &next_awareness,
-        awareness_changed,
-        target_detected,
-        target_lost,
-    );
     stats.visible_targets_total += visible_now.len();
-    publish_spatial_state(&mut state, visible_now, remembered_now, next_awareness);
+    publish_spatial_state(&mut state, visible_now, remembered_now, next_stimuli);
+
+    if !state.entered.is_empty() || !state.exited.is_empty() {
+        spatial_visibility_changed.write(SpatialVisibilityChanged {
+            viewer: entity,
+            entered: state.entered.clone(),
+            exited: state.exited.clone(),
+        });
+    }
+    emit_stimulus_messages(entity, &previous_stimuli, &state.stimuli, stimulus_changed);
 }
 
-fn update_awareness_entry(
+fn update_stimulus_entry(
     target_entity: Entity,
     viewer: &SpatialFov,
     query: &SpatialVisibilityQuery,
-    modifiers: FovPerceptionModifiers,
+    source: FovStimulusSource,
     result: &crate::spatial::VisibilityTestResult,
     delta_seconds: f32,
-    previous: Option<SpatialAwarenessEntry>,
-) -> Option<SpatialAwarenessEntry> {
-    if !viewer.awareness.enabled {
+    previous: Option<SpatialStimulusEntry>,
+) -> Option<SpatialStimulusEntry> {
+    if !viewer.stimulus.enabled {
         return None;
     }
 
-    let mut entry = previous.unwrap_or_else(|| SpatialAwarenessEntry::new(target_entity));
-    let had_seen_target = entry.last_seen_seconds_ago.is_some() || result.visible;
+    let delta_seconds = delta_seconds.max(0.0);
+    let mut entry = previous.unwrap_or_else(|| SpatialStimulusEntry::new(target_entity));
 
     entry.currently_visible = result.visible;
+    entry.in_range = result.in_range;
+    entry.inside_shape = result.inside_shape;
+    entry.occluded = result.occluded;
     entry.visibility_score = 0.0;
+    entry.indirect_signal = 0.0;
     entry.focused = false;
 
     if result.visible {
         let sample = result.visible_sample.unwrap_or(query.origin);
-        let score = visibility_score_for_sample(query, sample, &viewer.awareness);
-        let gain = delta_seconds.max(0.0)
-            * viewer.awareness.gain_per_second.max(0.0)
+        let score = visibility_score_for_sample(query, sample, &viewer.stimulus);
+        let gain = delta_seconds
+            * viewer.stimulus.gain_per_second.max(0.0)
             * score.visibility_score
-            * modifiers.light_exposure.max(0.0)
-            * modifiers.awareness_gain_multiplier.max(0.0);
-        entry.awareness = (entry.awareness + gain).clamp(0.0, viewer.awareness.max_awareness);
+            * source.direct_visibility_scale.max(0.0)
+            * source.signal_gain_multiplier.max(0.0);
+        entry.signal = (entry.signal + gain).clamp(0.0, viewer.stimulus.max_signal);
         entry.visibility_score = score.visibility_score;
         entry.focused = score.focused;
         entry.last_seen_seconds_ago = Some(0.0);
         entry.last_known_position = result.visible_sample;
     } else {
         if let Some(last_seen) = entry.last_seen_seconds_ago.as_mut() {
-            *last_seen += delta_seconds.max(0.0);
+            *last_seen += delta_seconds;
         }
 
-        let mut next_awareness = (entry.awareness
-            - delta_seconds.max(0.0)
-                * viewer.awareness.loss_per_second.max(0.0)
-                * modifiers.awareness_loss_multiplier.max(0.0))
+        let mut next_signal = (entry.signal
+            - delta_seconds
+                * viewer.stimulus.loss_per_second.max(0.0)
+                * source.signal_loss_multiplier.max(0.0))
         .max(0.0);
 
-        if result.in_range && !result.occluded && modifiers.noise_emission > 0.0 {
-            next_awareness = (next_awareness
-                + delta_seconds.max(0.0)
-                    * viewer.awareness.noise_gain_per_second.max(0.0)
-                    * modifiers.noise_emission.max(0.0))
-            .clamp(0.0, viewer.awareness.max_awareness);
-        }
+        let indirect_signal = if result.in_range && !result.occluded {
+            delta_seconds
+                * viewer.stimulus.indirect_gain_per_second.max(0.0)
+                * source.indirect_signal.max(0.0)
+                * source.signal_gain_multiplier.max(0.0)
+        } else {
+            0.0
+        };
 
-        entry.awareness = next_awareness;
+        next_signal = (next_signal + indirect_signal).clamp(0.0, viewer.stimulus.max_signal);
+        entry.signal = next_signal;
+        entry.indirect_signal = indirect_signal;
     }
 
-    entry.level = classify_awareness(
-        entry.awareness,
-        entry.currently_visible,
-        had_seen_target,
-        viewer.awareness.forget_after_seconds,
+    if should_forget_target(
+        viewer.stimulus.forget_after_seconds,
         entry.last_seen_seconds_ago,
-        viewer.awareness.alert_threshold,
-    );
-
-    if entry.level == AwarenessLevel::Unaware
-        && should_forget_target(
-            viewer.awareness.forget_after_seconds,
-            entry.last_seen_seconds_ago,
-        )
+    ) && !entry.currently_visible
+        && entry.signal <= 0.0
     {
         return None;
     }
 
-    if entry.level == AwarenessLevel::Unaware
-        && !entry.currently_visible
-        && entry.last_seen_seconds_ago.is_none()
-        && entry.awareness <= 0.0
-    {
+    if !entry.currently_visible && entry.last_seen_seconds_ago.is_none() && entry.signal <= 0.0 {
         return None;
     }
 
     Some(entry)
 }
 
-fn emit_awareness_messages(
+fn emit_stimulus_messages(
     viewer: Entity,
-    previous: &HashMap<Entity, SpatialAwarenessEntry>,
-    next: &[SpatialAwarenessEntry],
-    awareness_changed: &mut MessageWriter<SpatialAwarenessChanged>,
-    target_detected: &mut MessageWriter<SpatialTargetDetected>,
-    target_lost: &mut MessageWriter<SpatialTargetLost>,
+    previous: &HashMap<Entity, SpatialStimulusEntry>,
+    next: &[SpatialStimulusEntry],
+    stimulus_changed: &mut MessageWriter<SpatialStimulusChanged>,
 ) {
     let next_map: HashMap<_, _> = next
         .iter()
@@ -764,51 +868,51 @@ fn emit_awareness_messages(
         .collect();
 
     for (target, entry) in &next_map {
-        let previous_level = previous
-            .get(target)
-            .map(|previous| previous.level)
-            .unwrap_or(AwarenessLevel::Unaware);
-        if previous_level != entry.level {
-            awareness_changed.write(SpatialAwarenessChanged {
-                viewer,
-                target: *target,
-                previous_level,
-                level: entry.level,
-                awareness: entry.awareness,
-                last_known_position: entry.last_known_position,
-            });
+        if previous.get(target) == Some(entry) {
+            continue;
         }
 
-        if previous_level != AwarenessLevel::Alert && entry.level == AwarenessLevel::Alert {
-            target_detected.write(SpatialTargetDetected {
-                viewer,
-                target: *target,
-                awareness: entry.awareness,
-                last_known_position: entry.last_known_position,
-            });
-        }
+        stimulus_changed.write(SpatialStimulusChanged {
+            viewer,
+            target: *target,
+            previous_signal: previous.get(target).map_or(0.0, |previous| previous.signal),
+            signal: entry.signal,
+            visibility_score: entry.visibility_score,
+            indirect_signal: entry.indirect_signal,
+            currently_visible: entry.currently_visible,
+            in_range: entry.in_range,
+            inside_shape: entry.inside_shape,
+            occluded: entry.occluded,
+            last_known_position: entry.last_known_position,
+        });
     }
 
     for (target, entry) in previous {
-        let next_level = next_map
-            .get(target)
-            .map(|next| next.level)
-            .unwrap_or(AwarenessLevel::Unaware);
-        if entry.level == AwarenessLevel::Alert && next_level != AwarenessLevel::Alert {
-            let next_entry = next_map.get(target);
-            target_lost.write(SpatialTargetLost {
-                viewer,
-                target: *target,
-                awareness: next_entry.map(|next| next.awareness).unwrap_or(0.0),
-                last_known_position: next_entry
-                    .and_then(|next| next.last_known_position)
-                    .or(entry.last_known_position),
-            });
+        if next_map.contains_key(target) {
+            continue;
         }
+
+        stimulus_changed.write(SpatialStimulusChanged {
+            viewer,
+            target: *target,
+            previous_signal: entry.signal,
+            signal: 0.0,
+            visibility_score: 0.0,
+            indirect_signal: 0.0,
+            currently_visible: false,
+            in_range: false,
+            inside_shape: false,
+            occluded: false,
+            last_known_position: entry.last_known_position,
+        });
     }
 }
 
-fn publish_grid_state(state: &mut GridFovState, visible_now: Vec<IVec2>, remember_seen: bool) {
+fn publish_grid_state(
+    state: &mut GridFovState,
+    visible_now: Vec<IVec2>,
+    remember_seen: bool,
+) -> bool {
     let old_visible: HashSet<_> = state.visible_now.iter().copied().collect();
     let new_visible: HashSet<_> = visible_now.iter().copied().collect();
 
@@ -838,7 +942,9 @@ fn publish_grid_state(state: &mut GridFovState, visible_now: Vec<IVec2>, remembe
 
     let changed = state.visible_now != visible_now || state.explored != explored;
     if !changed {
-        return;
+        state.entered.clear();
+        state.exited.clear();
+        return false;
     }
 
     state.visible_now = visible_now;
@@ -846,14 +952,15 @@ fn publish_grid_state(state: &mut GridFovState, visible_now: Vec<IVec2>, remembe
     state.explored.append(&mut explored);
     state.entered = entered;
     state.exited = exited;
+    true
 }
 
 fn publish_spatial_state(
     state: &mut SpatialFovState,
     visible_now: Vec<Entity>,
     remembered_now: Vec<Entity>,
-    awareness_entries: Vec<SpatialAwarenessEntry>,
-) {
+    stimuli: Vec<SpatialStimulusEntry>,
+) -> bool {
     let old_visible: HashSet<_> = state.visible_now.iter().copied().collect();
     let new_visible: HashSet<_> = visible_now.iter().copied().collect();
 
@@ -873,16 +980,19 @@ fn publish_spatial_state(
 
     let changed = state.visible_now != visible_now
         || state.remembered != remembered_now
-        || state.awareness != awareness_entries;
+        || state.stimuli != stimuli;
     if !changed {
-        return;
+        state.entered.clear();
+        state.exited.clear();
+        return false;
     }
 
     state.visible_now = visible_now;
     state.remembered = remembered_now;
     state.entered = entered;
     state.exited = exited;
-    state.awareness = awareness_entries;
+    state.stimuli = stimuli;
+    true
 }
 
 fn draw_cone_3d(
@@ -921,7 +1031,6 @@ fn draw_cone_3d(
     for i in 0..edge_count {
         let angle = std::f32::consts::TAU * i as f32 / edge_count as f32;
         let dir = tangent * angle.cos() + bitangent * angle.sin();
-        // First edge in green to break symmetry and show rotation
         let edge_color = if i == 0 {
             Color::from(css::LIMEGREEN)
         } else {
@@ -936,6 +1045,70 @@ fn draw_cone_3d(
             let mid = origin + forward * range * frac;
             let r = range * frac * half_angle_radians.tan();
             gizmos.circle(Isometry3d::new(mid, orientation), r, fill);
+        }
+    }
+}
+
+fn draw_rect_3d(
+    gizmos: &mut Gizmos<'_, '_, FovDebugGizmos>,
+    origin: Vec3,
+    forward: Vec3,
+    depth: f32,
+    half_width: f32,
+    half_height: f32,
+    color: Color,
+    filled: bool,
+) {
+    let forward = forward.normalize_or_zero();
+    if forward == Vec3::ZERO {
+        gizmos.sphere(origin, depth, color.with_alpha(0.15));
+        return;
+    }
+
+    let up_hint = if forward.cross(Vec3::Y).length_squared() > 0.0001 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
+    let right = forward.cross(up_hint).normalize();
+    let up = right.cross(forward).normalize();
+
+    let far = origin + forward * depth;
+    let n0 = origin - right * half_width - up * half_height;
+    let n1 = origin + right * half_width - up * half_height;
+    let n2 = origin + right * half_width + up * half_height;
+    let n3 = origin - right * half_width + up * half_height;
+    let f0 = far - right * half_width - up * half_height;
+    let f1 = far + right * half_width - up * half_height;
+    let f2 = far + right * half_width + up * half_height;
+    let f3 = far - right * half_width + up * half_height;
+
+    gizmos.line(n0, n1, color);
+    gizmos.line(n1, n2, color);
+    gizmos.line(n2, n3, color);
+    gizmos.line(n3, n0, color);
+    gizmos.line(f0, f1, color);
+    gizmos.line(f1, f2, color);
+    gizmos.line(f2, f3, color);
+    gizmos.line(f3, f0, color);
+    gizmos.line(n0, f0, Color::from(css::LIMEGREEN));
+    gizmos.line(n1, f1, color);
+    gizmos.line(n2, f2, color);
+    gizmos.line(n3, f3, color);
+    gizmos.arrow(origin, far, color);
+
+    if filled {
+        let fill = color.with_alpha(0.06);
+        for frac in [0.33, 0.66] {
+            let mid = origin + forward * depth * frac;
+            let m0 = mid - right * half_width - up * half_height;
+            let m1 = mid + right * half_width - up * half_height;
+            let m2 = mid + right * half_width + up * half_height;
+            let m3 = mid - right * half_width + up * half_height;
+            gizmos.line(m0, m1, fill);
+            gizmos.line(m1, m2, fill);
+            gizmos.line(m2, m3, fill);
+            gizmos.line(m3, m0, fill);
         }
     }
 }

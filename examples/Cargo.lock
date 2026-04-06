@@ -5014,7 +5014,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "saddle-ai-fov-example-perception-kernel"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_flair",
+ "bevy_input_focus",
+ "bevy_ui_widgets",
+ "saddle-ai-fov",
+ "saddle-pane",
+]
+
+[[package]]
 name = "saddle-ai-fov-example-radius-2d"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_flair",
+ "bevy_input_focus",
+ "bevy_ui_widgets",
+ "saddle-ai-fov",
+ "saddle-pane",
+]
+
+[[package]]
+name = "saddle-ai-fov-example-rect-2d"
 version = "0.1.0"
 dependencies = [
  "bevy",

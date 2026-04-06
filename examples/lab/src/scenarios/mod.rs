@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use saddle_bevy_e2e::{action::Action, actions::assertions, scenario::Scenario};
 
-use crate::{awareness_target_awareness, set_grid_viewer_cell, set_guard_angle, set_pause_motion};
+use crate::{pipeline_target_state, set_grid_viewer_cell, set_guard_angle, set_pause_motion};
 
 pub fn list_scenarios() -> Vec<&'static str> {
     vec![
@@ -9,6 +9,7 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "fov_smoke",
         "fov_grid_memory",
         "fov_cone_occlusion",
+        "fov_stimulus_pipeline",
         "fov_awareness_detection",
     ]
 }
@@ -19,7 +20,7 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "fov_smoke" => Some(fov_smoke()),
         "fov_grid_memory" => Some(fov_grid_memory()),
         "fov_cone_occlusion" => Some(fov_cone_occlusion()),
-        "fov_awareness_detection" => Some(fov_awareness_detection()),
+        "fov_stimulus_pipeline" | "fov_awareness_detection" => Some(fov_stimulus_pipeline(name)),
         _ => None,
     }
 }
@@ -118,33 +119,39 @@ fn fov_cone_occlusion() -> Scenario {
         .build()
 }
 
-fn fov_awareness_detection() -> Scenario {
-    Scenario::builder("fov_awareness_detection")
-        .description("Hold the guard on the dedicated awareness target until the awareness meter crosses the detection threshold, then rotate away and verify the target stays remembered while direct sight is lost.")
+fn fov_stimulus_pipeline(name: &str) -> Scenario {
+    Scenario::builder(name)
+        .description("Hold the guard on the pipeline target until the neutral stimulus signal crosses the alert threshold, then rotate away and verify the optional stealth mapper transitions into a post-visual state while line of sight is lost.")
         .then(pause_motion(true))
         .then(Action::WaitFrames(2))
         .then(guard_angle(0.0))
         .then(Action::WaitFrames(75))
-        .then(assertions::custom("awareness target crosses the detection threshold", |world| {
-            awareness_target_awareness(world).is_some_and(|(_, awareness)| awareness >= 0.8)
+        .then(assertions::custom("pipeline target crosses the alert threshold", |world| {
+            pipeline_target_state(world).is_some_and(|(_, signal)| signal >= 0.8)
         }))
-        .then(Action::Screenshot("awareness_alert".into()))
+        .then(assertions::custom("pipeline target reaches alert state", |world| {
+            pipeline_target_state(world).is_some_and(|(level, _)| {
+                level == saddle_ai_fov::StealthAwarenessLevel::Alert
+            })
+        }))
+        .then(Action::Screenshot("pipeline_alert".into()))
         .then(Action::WaitFrames(1))
         .then(guard_angle(-0.95))
         .then(Action::WaitFrames(20))
-        .then(assertions::custom("awareness target leaves direct sight", |world| {
-            !world.resource::<crate::LabDiagnostics>().awareness_target_visible
+        .then(assertions::custom("pipeline target leaves direct sight", |world| {
+            !world.resource::<crate::LabDiagnostics>().pipeline_target_visible
         }))
-        .then(assertions::custom("awareness target remains remembered after losing sight", |world| {
-            awareness_target_awareness(world).is_some_and(|(level, _)| {
+        .then(assertions::custom("pipeline target remains in a post-visual stealth state", |world| {
+            pipeline_target_state(world).is_some_and(|(level, _)| {
                 matches!(
                     level,
-                    saddle_ai_fov::AwarenessLevel::Searching | saddle_ai_fov::AwarenessLevel::Lost
+                    saddle_ai_fov::StealthAwarenessLevel::Searching
+                        | saddle_ai_fov::StealthAwarenessLevel::Lost
                 )
             })
         }))
-        .then(Action::Screenshot("awareness_searching".into()))
+        .then(Action::Screenshot("pipeline_searching".into()))
         .then(Action::WaitFrames(1))
-        .then(assertions::log_summary("fov_awareness_detection"))
+        .then(assertions::log_summary(name))
         .build()
 }

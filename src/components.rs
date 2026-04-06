@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
 use crate::{
-    awareness::{SpatialAwarenessConfig, SpatialAwarenessEntry},
     grid::GridFovConfig,
     spatial::{OccluderShape, SpatialDimension, SpatialShape, VisibilityLayerMask},
+    stimulus::{SpatialStimulusConfig, SpatialStimulusEntry},
 };
 
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq, Reflect)]
@@ -66,7 +66,7 @@ pub struct SpatialFov {
     pub local_origin: Vec3,
     pub local_forward: Vec3,
     pub near_override: f32,
-    pub awareness: SpatialAwarenessConfig,
+    pub stimulus: SpatialStimulusConfig,
     pub remember_seen_targets: bool,
     pub enabled: bool,
 }
@@ -82,7 +82,7 @@ impl SpatialFov {
             local_origin: Vec3::ZERO,
             local_forward: Vec3::X,
             near_override: 0.0,
-            awareness: SpatialAwarenessConfig::default(),
+            stimulus: SpatialStimulusConfig::default(),
             remember_seen_targets: true,
             enabled: true,
         }
@@ -99,7 +99,7 @@ impl SpatialFov {
             local_origin: Vec3::ZERO,
             local_forward: Vec3::X,
             near_override: 0.0,
-            awareness: SpatialAwarenessConfig::default(),
+            stimulus: SpatialStimulusConfig::default(),
             remember_seen_targets: true,
             enabled: true,
         }
@@ -116,7 +116,43 @@ impl SpatialFov {
             local_origin: Vec3::ZERO,
             local_forward: Vec3::X,
             near_override: 0.0,
-            awareness: SpatialAwarenessConfig::default(),
+            stimulus: SpatialStimulusConfig::default(),
+            remember_seen_targets: true,
+            enabled: true,
+        }
+    }
+
+    pub fn rect_2d(depth: f32, half_width: f32) -> Self {
+        Self {
+            shape: SpatialShape::Rect {
+                depth: depth.max(0.0),
+                half_width: half_width.max(0.0),
+                half_height: 0.0,
+            },
+            dimension: SpatialDimension::Planar2d,
+            layers: VisibilityLayerMask::ALL,
+            local_origin: Vec3::ZERO,
+            local_forward: Vec3::X,
+            near_override: 0.0,
+            stimulus: SpatialStimulusConfig::default(),
+            remember_seen_targets: true,
+            enabled: true,
+        }
+    }
+
+    pub fn rect_3d(depth: f32, half_width: f32, half_height: f32) -> Self {
+        Self {
+            shape: SpatialShape::Rect {
+                depth: depth.max(0.0),
+                half_width: half_width.max(0.0),
+                half_height: half_height.max(0.0),
+            },
+            dimension: SpatialDimension::Volumetric3d,
+            layers: VisibilityLayerMask::ALL,
+            local_origin: Vec3::ZERO,
+            local_forward: Vec3::X,
+            near_override: 0.0,
+            stimulus: SpatialStimulusConfig::default(),
             remember_seen_targets: true,
             enabled: true,
         }
@@ -142,8 +178,8 @@ impl SpatialFov {
         self
     }
 
-    pub fn with_awareness(mut self, awareness: SpatialAwarenessConfig) -> Self {
-        self.awareness = awareness;
+    pub fn with_stimulus(mut self, stimulus: SpatialStimulusConfig) -> Self {
+        self.stimulus = stimulus;
         self
     }
 }
@@ -155,7 +191,7 @@ pub struct SpatialFovState {
     pub remembered: Vec<Entity>,
     pub entered: Vec<Entity>,
     pub exited: Vec<Entity>,
-    pub awareness: Vec<SpatialAwarenessEntry>,
+    pub stimuli: Vec<SpatialStimulusEntry>,
 }
 
 impl SpatialFovState {
@@ -163,8 +199,8 @@ impl SpatialFovState {
         self.visible_now.contains(&entity)
     }
 
-    pub fn awareness_of(&self, entity: Entity) -> Option<&SpatialAwarenessEntry> {
-        self.awareness.iter().find(|entry| entry.entity == entity)
+    pub fn stimulus_of(&self, entity: Entity) -> Option<&SpatialStimulusEntry> {
+        self.stimuli.iter().find(|entry| entry.entity == entity)
     }
 }
 
@@ -208,20 +244,20 @@ impl Default for FovTarget {
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(Component)]
-pub struct FovPerceptionModifiers {
-    pub light_exposure: f32,
-    pub noise_emission: f32,
-    pub awareness_gain_multiplier: f32,
-    pub awareness_loss_multiplier: f32,
+pub struct FovStimulusSource {
+    pub direct_visibility_scale: f32,
+    pub indirect_signal: f32,
+    pub signal_gain_multiplier: f32,
+    pub signal_loss_multiplier: f32,
 }
 
-impl Default for FovPerceptionModifiers {
+impl Default for FovStimulusSource {
     fn default() -> Self {
         Self {
-            light_exposure: 1.0,
-            noise_emission: 0.0,
-            awareness_gain_multiplier: 1.0,
-            awareness_loss_multiplier: 1.0,
+            direct_visibility_scale: 1.0,
+            indirect_signal: 0.0,
+            signal_gain_multiplier: 1.0,
+            signal_loss_multiplier: 1.0,
         }
     }
 }

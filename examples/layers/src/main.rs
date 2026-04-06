@@ -53,6 +53,8 @@ fn main() {
             draw_view_shapes: true,
             draw_filled_shapes: true,
             draw_occlusion_rays: true,
+            draw_blocked_rays: false,
+            draw_occluder_shapes: false,
             max_grid_cells_per_viewer: 0,
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -143,7 +145,9 @@ fn setup(
     {
         commands.spawn((
             Name::new(format!("Red Target {i}")),
-            TargetVisual { base_color: red_color },
+            TargetVisual {
+                base_color: red_color,
+            },
             FovTarget::default().with_layers(VisibilityLayerMask::from_layer(LAYER_RED)),
             Sprite {
                 color: red_color,
@@ -167,7 +171,9 @@ fn setup(
     {
         commands.spawn((
             Name::new(format!("Blue Target {i}")),
-            TargetVisual { base_color: blue_color },
+            TargetVisual {
+                base_color: blue_color,
+            },
             FovTarget::default().with_layers(VisibilityLayerMask::from_layer(LAYER_BLUE)),
             Sprite {
                 color: blue_color,
@@ -181,16 +187,15 @@ fn setup(
 
     // Shared targets (both layers) — visible to both viewers
     let shared_color = Color::srgb(0.70, 0.55, 0.80);
-    for (i, pos) in [
-        Vec3::new(0.0, 0.0, 3.0),
-        Vec3::new(0.0, -220.0, 3.0),
-    ]
-    .iter()
-    .enumerate()
+    for (i, pos) in [Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, -220.0, 3.0)]
+        .iter()
+        .enumerate()
     {
         commands.spawn((
             Name::new(format!("Shared Target {i}")),
-            TargetVisual { base_color: shared_color },
+            TargetVisual {
+                base_color: shared_color,
+            },
             FovTarget::default().with_layers(
                 VisibilityLayerMask::from_layer(LAYER_RED)
                     .union(VisibilityLayerMask::from_layer(LAYER_BLUE)),
@@ -208,7 +213,7 @@ fn setup(
     commands.spawn((
         Name::new("Example Label"),
         Text::new(
-            "layers: red viewer sees red+shared targets, blue sees blue+shared — same world, filtered perception",
+            "layers: red viewer sees red+shared targets, blue sees blue+shared.\nControls: use the top-right pane to tune shared range and orbit speed.",
         ),
         Node {
             position_type: PositionType::Absolute,

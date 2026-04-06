@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use saddle_ai_fov::{
-    FovDebugSettings, FovOccluder, FovPlugin, FovTarget, OccluderShape, SpatialFov,
-    SpatialFovState,
+    FovDebugSettings, FovOccluder, FovPlugin, FovTarget, OccluderShape, SpatialFov, SpatialFovState,
 };
 use saddle_pane::prelude::*;
 
@@ -45,6 +44,8 @@ fn main() {
             draw_view_shapes: true,
             draw_filled_shapes: true,
             draw_occlusion_rays: true,
+            draw_blocked_rays: true,
+            draw_occluder_shapes: true,
             max_grid_cells_per_viewer: 0,
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -114,8 +115,16 @@ fn setup(
 
     // Two occluder walls
     for (name, pos, size) in [
-        ("Wall Left", Vec3::new(-100.0, 30.0, 2.0), Vec2::new(24.0, 180.0)),
-        ("Wall Right", Vec3::new(130.0, -40.0, 2.0), Vec2::new(24.0, 160.0)),
+        (
+            "Wall Left",
+            Vec3::new(-100.0, 30.0, 2.0),
+            Vec2::new(24.0, 180.0),
+        ),
+        (
+            "Wall Right",
+            Vec3::new(130.0, -40.0, 2.0),
+            Vec2::new(24.0, 160.0),
+        ),
     ] {
         commands.spawn((
             Name::new(name),
@@ -158,7 +167,9 @@ fn setup(
 
     commands.spawn((
         Name::new("Example Label"),
-        Text::new("radius_2d: omnidirectional detection radius with occluder primitives"),
+        Text::new(
+            "radius_2d: omnidirectional detection radius with occluder primitives.\nControls: use the top-right pane to tune range, near override, and orbit speed.",
+        ),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),

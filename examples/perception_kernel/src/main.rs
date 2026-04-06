@@ -1,66 +1,65 @@
 use bevy::prelude::*;
 use saddle_ai_fov::{
     FovDebugSettings, FovOccluder, FovPlugin, FovStimulusSource, FovTarget, OccluderShape,
-    SpatialFov, SpatialStimulusConfig, StealthAwarenessConfig, StealthAwarenessLevel,
-    StealthAwarenessPlugin, StealthAwarenessState,
+    SpatialFov, SpatialFovState, SpatialStimulusConfig,
 };
 use saddle_pane::prelude::*;
 
 #[derive(Component)]
-struct Guard;
+struct Sensor;
 
 #[derive(Component)]
-struct Infiltrator;
+struct HighlightTarget;
 
 #[derive(Component)]
-struct AwarenessBarFill;
+struct SignalBarFill;
 
 #[derive(Resource, Debug, Clone, Copy, Pane)]
-#[pane(title = "Stealth Detection", position = "top-right")]
-struct StealthPane {
+#[pane(title = "Perception Kernel", position = "top-right")]
+struct KernelPane {
     #[pane(slider, min = 180.0, max = 520.0, step = 5.0)]
-    guard_range: f32,
+    range: f32,
     #[pane(slider, min = 0.2, max = 1.2, step = 0.02)]
-    guard_half_angle: f32,
+    half_angle: f32,
     #[pane(slider, min = 0.08, max = 0.7, step = 0.02)]
     focus_half_angle: f32,
     #[pane(slider, min = 0.0, max = 120.0, step = 2.0)]
     near_override: f32,
-    #[pane(slider, min = 0.25, max = 0.95, step = 0.01)]
-    alert_threshold: f32,
     #[pane(slider, min = 0.15, max = 1.4, step = 0.02)]
-    patrol_speed: f32,
+    sweep_speed: f32,
     #[pane(slider, min = 0.2, max = 2.0, step = 0.05)]
-    spotlight_exposure: f32,
+    spotlight_scale: f32,
     #[pane(slider, min = 0.1, max = 1.0, step = 0.05)]
-    shadow_exposure: f32,
+    shadow_scale: f32,
     #[pane(slider, min = 0.0, max = 1.0, step = 0.05)]
-    grate_noise: f32,
+    indirect_signal: f32,
     #[pane(monitor)]
-    signal: f32,
+    highlighted_signal: f32,
     #[pane(monitor)]
-    alerted: bool,
+    visible_targets: usize,
+    #[pane(monitor)]
+    remembered_targets: usize,
 }
 
-impl Default for StealthPane {
+impl Default for KernelPane {
     fn default() -> Self {
         Self {
-            guard_range: 340.0,
-            guard_half_angle: 0.62,
+            range: 340.0,
+            half_angle: 0.62,
             focus_half_angle: 0.24,
             near_override: 48.0,
-            alert_threshold: 0.8,
-            patrol_speed: 0.52,
-            spotlight_exposure: 1.55,
-            shadow_exposure: 0.35,
-            grate_noise: 0.65,
-            signal: 0.0,
-            alerted: false,
+            sweep_speed: 0.52,
+            spotlight_scale: 1.55,
+            shadow_scale: 0.35,
+            indirect_signal: 0.65,
+            highlighted_signal: 0.0,
+            visible_targets: 0,
+            remembered_targets: 0,
         }
     }
 }
 
-const INFILTRATOR_PATH: [Vec3; 6] = [
+const TARGET_PATH: [Vec3; 6] = [
     Vec3::new(250.0, -160.0, 6.0),
     Vec3::new(180.0, -70.0, 6.0),
     Vec3::new(120.0, 10.0, 6.0),
@@ -72,6 +71,7 @@ const INFILTRATOR_PATH: [Vec3; 6] = [
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.03, 0.035, 0.04)))
+        .insert_resource(KernelPane::default())
         .insert_resource(FovDebugSettings {
             enabled: true,
             draw_grid_cells: false,
@@ -84,7 +84,7 @@ fn main() {
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "fov stealth_detection".into(),
+                title: "fov perception_kernel".into(),
                 resolution: (1360, 860).into(),
                 ..default()
             }),
@@ -97,9 +97,9 @@ fn main() {
             bevy_input_focus::tab_navigation::TabNavigationPlugin,
             PanePlugin,
         ))
-        .register_pane::<StealthPane>()
+        .register_pane::<KernelPane>()
         .init_gizmo_group::<saddle_ai_fov::FovDebugGizmos>()
-        .add_plugins((FovPlugin::default(), StealthAwarenessPlugin::default()))
+        .add_plugins(FovPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -107,11 +107,11 @@ fn main() {
         )
         .add_systems(
             Update,
-            animate_guard.before(saddle_ai_fov::FovSystems::MarkDirty),
+            animate_sensor.before(saddle_ai_fov::FovSystems::MarkDirty),
         )
         .add_systems(
             Update,
-            animate_infiltrator.before(saddle_ai_fov::FovSystems::MarkDirty),
+            animate_target.before(saddle_ai_fov::FovSystems::MarkDirty),
         )
         .add_systems(
             Update,
@@ -125,16 +125,11 @@ fn main() {
 }
 
 fn setup(mut commands: Commands) {
-    commands.spawn((Name::new("Stealth Camera"), Camera2d));
+    commands.spawn((Name::new("Kernel Camera"), Camera2d));
     commands.spawn((
         Name::new("Museum Floor"),
         Sprite::from_color(Color::srgb(0.08, 0.09, 0.11), Vec2::new(1120.0, 680.0)),
         Transform::from_xyz(0.0, 0.0, -5.0),
-    ));
-    commands.spawn((
-        Name::new("Gallery Strip"),
-        Sprite::from_color(Color::srgb(0.16, 0.12, 0.08), Vec2::new(540.0, 90.0)),
-        Transform::from_xyz(170.0, -150.0, -2.0),
     ));
     commands.spawn((
         Name::new("Spotlight Zone"),
@@ -176,34 +171,44 @@ fn setup(mut commands: Commands) {
     }
 
     commands.spawn((
-        Name::new("Guard"),
-        Guard,
+        Name::new("Sensor"),
+        Sensor,
         SpatialFov::cone_2d(340.0, 0.62)
             .with_near_override(48.0)
             .with_stimulus(SpatialStimulusConfig {
                 focused_half_angle_radians: 0.24,
                 ..default()
             }),
-        StealthAwarenessConfig {
-            alert_threshold: 0.8,
-        },
         Sprite::from_color(Color::srgb(0.96, 0.57, 0.22), Vec2::splat(34.0)),
         Transform::from_xyz(-300.0, 0.0, 5.0),
         GlobalTransform::from_xyz(-300.0, 0.0, 5.0),
     ));
 
     commands.spawn((
-        Name::new("Infiltrator"),
-        Infiltrator,
+        Name::new("Highlighted Target"),
+        HighlightTarget,
         FovTarget::default(),
         FovStimulusSource::default(),
         Sprite::from_color(Color::srgb(0.56, 0.84, 0.94), Vec2::new(26.0, 32.0)),
-        Transform::from_translation(INFILTRATOR_PATH[0]),
-        GlobalTransform::from_translation(INFILTRATOR_PATH[0]),
+        Transform::from_translation(TARGET_PATH[0]),
+        GlobalTransform::from_translation(TARGET_PATH[0]),
     ));
 
+    for (name, position) in [
+        ("Side Target", Vec3::new(80.0, 160.0, 3.0)),
+        ("Occluded Target", Vec3::new(360.0, 40.0, 3.0)),
+    ] {
+        commands.spawn((
+            Name::new(name),
+            FovTarget::default(),
+            Sprite::from_color(Color::srgb(0.58, 0.62, 0.68), Vec2::splat(24.0)),
+            Transform::from_translation(position),
+            GlobalTransform::from_translation(position),
+        ));
+    }
+
     commands.spawn((
-        Name::new("Awareness Frame"),
+        Name::new("Signal Frame"),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),
@@ -216,21 +221,21 @@ fn setup(mut commands: Commands) {
         BorderColor::all(Color::srgb(0.72, 0.72, 0.74)),
         BackgroundColor(Color::srgba(0.02, 0.03, 0.04, 0.82)),
         children![(
-            Name::new("Awareness Fill"),
-            AwarenessBarFill,
+            Name::new("Signal Fill"),
+            SignalBarFill,
             Node {
                 width: percent(0.0),
                 height: percent(100.0),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.27, 0.68, 0.92)),
+            BackgroundColor(Color::srgb(0.24, 0.68, 0.92)),
         )],
     ));
 
     commands.spawn((
-        Name::new("Stealth Label"),
+        Name::new("Example Label"),
         Text::new(
-            "stealth_detection: top-right pane tunes the core stimulus kernel while the stealth plugin maps signal into alert/search states",
+            "perception_kernel: top-right pane tunes the neutral signal model; the bar and target color show raw stimulus without any stealth-specific state machine.\nControls: use the pane to tune cone, focus, direct visibility scale, and indirect signal while the target loops through the arena.",
         ),
         Node {
             position_type: PositionType::Absolute,
@@ -246,104 +251,97 @@ fn setup(mut commands: Commands) {
     ));
 }
 
-fn sync_pane(
-    pane: Res<StealthPane>,
-    mut guard: Single<(&mut SpatialFov, &mut StealthAwarenessConfig), With<Guard>>,
-) {
+fn sync_pane(pane: Res<KernelPane>, mut sensor: Single<&mut SpatialFov, With<Sensor>>) {
     if !pane.is_changed() {
         return;
     }
 
-    guard.0.shape = saddle_ai_fov::SpatialShape::Cone {
-        range: pane.guard_range,
-        half_angle_radians: pane.guard_half_angle,
+    sensor.shape = saddle_ai_fov::SpatialShape::Cone {
+        range: pane.range,
+        half_angle_radians: pane.half_angle,
     };
-    guard.0.near_override = pane.near_override;
-    guard.0.stimulus.focused_half_angle_radians = pane.focus_half_angle;
-    guard.1.alert_threshold = pane.alert_threshold;
+    sensor.near_override = pane.near_override;
+    sensor.stimulus.focused_half_angle_radians = pane.focus_half_angle;
 }
 
-fn animate_guard(
+fn animate_sensor(
     time: Res<Time>,
-    pane: Res<StealthPane>,
-    mut guard: Single<(&mut Transform, &mut GlobalTransform), With<Guard>>,
+    pane: Res<KernelPane>,
+    mut sensor: Single<(&mut Transform, &mut GlobalTransform), With<Sensor>>,
 ) {
-    let angle = (time.elapsed_secs() * pane.patrol_speed).sin() * 0.9;
-    guard.0.rotation = Quat::from_rotation_z(angle);
-    *guard.1 = GlobalTransform::from(*guard.0.as_ref());
+    let angle = (time.elapsed_secs() * pane.sweep_speed).sin() * 0.9;
+    sensor.0.rotation = Quat::from_rotation_z(angle);
+    *sensor.1 = GlobalTransform::from(*sensor.0.as_ref());
 }
 
-fn animate_infiltrator(
+fn animate_target(
     time: Res<Time>,
-    pane: Res<StealthPane>,
-    mut infiltrator: Single<(&mut Transform, &mut GlobalTransform), With<Infiltrator>>,
+    pane: Res<KernelPane>,
+    mut target: Single<(&mut Transform, &mut GlobalTransform), With<HighlightTarget>>,
 ) {
-    let progress = time.elapsed_secs() * (0.18 + pane.patrol_speed * 0.18);
-    let from = progress.floor() as usize % INFILTRATOR_PATH.len();
-    let to = (from + 1) % INFILTRATOR_PATH.len();
+    let progress = time.elapsed_secs() * (0.18 + pane.sweep_speed * 0.18);
+    let from = progress.floor() as usize % TARGET_PATH.len();
+    let to = (from + 1) % TARGET_PATH.len();
     let t = progress.fract();
-    let position = INFILTRATOR_PATH[from].lerp(INFILTRATOR_PATH[to], t);
-    infiltrator.0.translation = position;
-    *infiltrator.1 = GlobalTransform::from_translation(position);
+    let position = TARGET_PATH[from].lerp(TARGET_PATH[to], t);
+    target.0.translation = position;
+    *target.1 = GlobalTransform::from_translation(position);
 }
 
 fn update_stimulus_source(
-    pane: Res<StealthPane>,
-    infiltrator: Single<&Transform, With<Infiltrator>>,
-    mut source: Single<&mut FovStimulusSource, With<Infiltrator>>,
+    pane: Res<KernelPane>,
+    target: Single<&Transform, With<HighlightTarget>>,
+    mut source: Single<&mut FovStimulusSource, With<HighlightTarget>>,
 ) {
-    let in_spotlight = infiltrator
+    let in_spotlight = target
         .translation
         .truncate()
         .distance(Vec2::new(200.0, 10.0))
         < 92.0;
-    let on_grate = infiltrator.translation.x > 210.0
-        && infiltrator.translation.x < 360.0
-        && infiltrator.translation.y > 28.0
-        && infiltrator.translation.y < 84.0;
+    let on_grate = target.translation.x > 210.0
+        && target.translation.x < 360.0
+        && target.translation.y > 28.0
+        && target.translation.y < 84.0;
 
     source.direct_visibility_scale = if in_spotlight {
-        pane.spotlight_exposure
+        pane.spotlight_scale
     } else {
-        pane.shadow_exposure
+        pane.shadow_scale
     };
-    source.indirect_signal = if on_grate { pane.grate_noise } else { 0.0 };
+    source.indirect_signal = if on_grate { pane.indirect_signal } else { 0.0 };
 }
 
 fn update_presentation(
-    mut pane: ResMut<StealthPane>,
-    guard_state: Single<&StealthAwarenessState, With<Guard>>,
-    infiltrator: Single<(Entity, &mut Sprite), With<Infiltrator>>,
-    awareness_bar: Single<(&mut Node, &mut BackgroundColor), With<AwarenessBarFill>>,
+    mut pane: ResMut<KernelPane>,
+    sensor: Single<&SpatialFovState, With<Sensor>>,
+    target: Single<(Entity, &mut Sprite), With<HighlightTarget>>,
+    bar: Single<(&mut Node, &mut BackgroundColor), With<SignalBarFill>>,
 ) {
-    let (infiltrator_entity, mut infiltrator_sprite) = infiltrator.into_inner();
-    let entry = guard_state
-        .awareness_of(infiltrator_entity)
-        .cloned();
-    let level = entry
-        .as_ref()
-        .map(|entry| entry.level)
-        .unwrap_or(StealthAwarenessLevel::Unaware);
-    let signal = entry.as_ref().map(|entry| entry.signal).unwrap_or(0.0);
+    let (target_entity, mut sprite) = target.into_inner();
+    let signal = sensor
+        .stimulus_of(target_entity)
+        .map(|entry| entry.signal)
+        .unwrap_or(0.0);
 
-    pane.signal = signal;
-    pane.alerted = level == StealthAwarenessLevel::Alert;
+    pane.highlighted_signal = signal;
+    pane.visible_targets = sensor.visible_now.len();
+    pane.remembered_targets = sensor.remembered.len();
 
-    infiltrator_sprite.color = match level {
-        StealthAwarenessLevel::Alert => Color::srgb(0.96, 0.24, 0.18),
-        StealthAwarenessLevel::Searching
-        | StealthAwarenessLevel::Suspicious
-        | StealthAwarenessLevel::Lost => Color::srgb(0.98, 0.86, 0.36),
-        _ => Color::srgb(0.56, 0.84, 0.94),
+    sprite.color = if signal >= 0.8 {
+        Color::srgb(0.95, 0.24, 0.18)
+    } else if signal >= 0.25 {
+        Color::srgb(0.98, 0.86, 0.36)
+    } else {
+        Color::srgb(0.56, 0.84, 0.94)
     };
 
-    let (mut awareness_fill, mut awareness_fill_color) = awareness_bar.into_inner();
-    awareness_fill.width = percent((signal * 100.0).clamp(0.0, 100.0));
-    awareness_fill_color.0 = match level {
-        StealthAwarenessLevel::Alert => Color::srgb(0.90, 0.20, 0.16),
-        StealthAwarenessLevel::Searching
-        | StealthAwarenessLevel::Suspicious
-        | StealthAwarenessLevel::Lost => Color::srgb(0.94, 0.75, 0.28),
-        _ => Color::srgb(0.24, 0.68, 0.92),
+    let (mut fill, mut fill_color) = bar.into_inner();
+    fill.width = percent((signal * 100.0).clamp(0.0, 100.0));
+    fill_color.0 = if signal >= 0.8 {
+        Color::srgb(0.90, 0.20, 0.16)
+    } else if signal >= 0.25 {
+        Color::srgb(0.94, 0.75, 0.28)
+    } else {
+        Color::srgb(0.24, 0.68, 0.92)
     };
 }

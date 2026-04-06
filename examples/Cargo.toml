@@ -7,6 +7,8 @@ members = [
     "cone_2d",
     "cone_3d",
     "radius_2d",
+    "rect_2d",
+    "perception_kernel",
     "layers",
     "stealth_detection",
     "lab",

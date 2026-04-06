@@ -1,9 +1,7 @@
 use saddle_ai_fov_example_support as support;
 
 use bevy::prelude::*;
-use saddle_ai_fov::{
-    FovPlugin, GridFov, GridFovState, GridOpacityMap, merge_grid_visibility,
-};
+use saddle_ai_fov::{FovPlugin, GridFov, GridFovState, GridOpacityMap, merge_grid_visibility};
 use saddle_pane::prelude::*;
 use support::{
     GridCellSprite, apply_grid_visibility_colors, demo_grid_map, sample_path, spawn_grid_tiles,
@@ -143,7 +141,9 @@ fn setup(mut commands: Commands, grid: Res<GridOpacityMap>) {
 
     commands.spawn((
         Name::new("Example Label"),
-        Text::new("multi_viewers: merged party vision without coupling the viewers to each other"),
+        Text::new(
+            "multi_viewers: merged party vision without coupling the viewers to each other.\nControls: use the top-right pane to pause motion and tune each scout independently.",
+        ),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),

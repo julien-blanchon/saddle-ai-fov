@@ -112,7 +112,9 @@ fn setup(mut commands: Commands, grid: Res<GridOpacityMap>) {
 
     commands.spawn((
         Name::new("Example Label"),
-        Text::new("exploration_memory: visible_now stays bright, explored cells remain readable"),
+        Text::new(
+            "exploration_memory: visible_now stays bright, explored cells remain readable.\nControls: use the top-right pane to pause motion and tune radius/speed.",
+        ),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),
@@ -143,10 +145,7 @@ fn animate_viewer(
     *viewer.1 = GlobalTransform::from_translation(position);
 }
 
-fn sync_controls(
-    pane: Res<ExplorationPane>,
-    mut viewer: Single<&mut GridFov, With<Explorer>>,
-) {
+fn sync_controls(pane: Res<ExplorationPane>, mut viewer: Single<&mut GridFov, With<Explorer>>) {
     if !pane.is_changed() {
         return;
     }
