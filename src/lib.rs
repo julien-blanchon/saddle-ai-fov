@@ -106,7 +106,6 @@ impl Plugin for FovPlugin {
             .init_resource::<FovDebugSettings>()
             .init_resource::<systems::FovRuntimeState>()
             .add_message::<messages::GridVisibilityChanged>()
-            .add_message::<SpatialStimulusChanged>()
             .add_message::<SpatialVisibilityChanged>()
             .add_message::<SpatialStimulusChanged>()
             .register_type::<FovDebugSettings>()
