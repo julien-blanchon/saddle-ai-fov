@@ -23,6 +23,7 @@ cd examples
 cargo run -p saddle-ai-fov-lab --features e2e -- smoke_launch
 cargo run -p saddle-ai-fov-lab --features e2e -- fov_grid_memory
 cargo run -p saddle-ai-fov-lab --features e2e -- fov_cone_occlusion
+cargo run -p saddle-ai-fov-lab --features e2e -- fov_guard_range_cutoff
 cargo run -p saddle-ai-fov-lab --features e2e -- fov_stimulus_pipeline
 ```
 

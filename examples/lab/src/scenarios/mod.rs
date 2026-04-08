@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use saddle_bevy_e2e::{action::Action, actions::assertions, scenario::Scenario};
+use saddle_bevy_e2e::{action::Action, actions::{assertions, inspect}, scenario::Scenario};
 
 use crate::{pipeline_target_state, set_grid_viewer_cell, set_guard_angle, set_pause_motion};
 
@@ -9,6 +9,7 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "fov_smoke",
         "fov_grid_memory",
         "fov_cone_occlusion",
+        "fov_guard_range_cutoff",
         "fov_stimulus_pipeline",
         "fov_awareness_detection",
         "fov_radius_sweep",
@@ -23,6 +24,7 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "fov_smoke" => Some(fov_smoke()),
         "fov_grid_memory" => Some(fov_grid_memory()),
         "fov_cone_occlusion" => Some(fov_cone_occlusion()),
+        "fov_guard_range_cutoff" => Some(fov_guard_range_cutoff()),
         "fov_stimulus_pipeline" | "fov_awareness_detection" => Some(fov_stimulus_pipeline(name)),
         "fov_radius_sweep" => Some(fov_radius_sweep()),
         "fov_multi_targets" => Some(fov_multi_targets()),
@@ -55,6 +57,7 @@ fn build_smoke(name: &'static str) -> Scenario {
         .then(assertions::custom("guard sees at least one target", |world| {
             world.resource::<crate::LabDiagnostics>().guard_visible_targets > 0
         }))
+        .then(inspect::log_resource::<crate::LabDiagnostics>("smoke diagnostics"))
         .then(Action::Screenshot("smoke".into()))
         .then(Action::WaitFrames(1))
         .then(assertions::log_summary(name))
@@ -122,6 +125,53 @@ fn fov_cone_occlusion() -> Scenario {
         .then(Action::Screenshot("cone_swept".into()))
         .then(Action::WaitFrames(1))
         .then(assertions::log_summary("fov_cone_occlusion"))
+        .build()
+}
+
+fn fov_guard_range_cutoff() -> Scenario {
+    Scenario::builder("fov_guard_range_cutoff")
+        .description(
+            "Reduce the guard cone range below the front target distance, verify the front target drops out while the closer pipeline target remains visible, then restore the range.",
+        )
+        .then(Action::WaitFrames(2))
+        .then(pause_motion(true))
+        .then(guard_angle(0.0))
+        .then(Action::WaitFrames(6))
+        .then(assertions::custom("front target starts visible", |world| {
+            world.resource::<crate::LabDiagnostics>().front_target_visible
+        }))
+        .then(assertions::custom("pipeline target starts visible", |world| {
+            world.resource::<crate::LabDiagnostics>().pipeline_target_visible
+        }))
+        .then(inspect::log_resource::<crate::LabDiagnostics>("range_cutoff_baseline"))
+        .then(Action::Screenshot("range_cutoff_before".into()))
+        .then(Action::WaitFrames(1))
+        .then(Action::Custom(Box::new(|world| {
+            world.resource_mut::<crate::LabControl>().guard_range = 390.0;
+        })))
+        .then(Action::WaitFrames(8))
+        .then(assertions::custom("front target cut off by range", |world| {
+            let diagnostics = world.resource::<crate::LabDiagnostics>();
+            !diagnostics.front_target_visible && diagnostics.pipeline_target_visible
+        }))
+        .then(inspect::log_resource::<crate::LabDiagnostics>("range_cutoff_cutoff"))
+        .then(Action::Screenshot("range_cutoff_after".into()))
+        .then(Action::WaitFrames(1))
+        .then(Action::Custom(Box::new(|world| {
+            world.resource_mut::<crate::LabControl>().guard_range = 420.0;
+        })))
+        .then(Action::WaitUntil {
+            label: "front target visible again".into(),
+            condition: Box::new(|world| world.resource::<crate::LabDiagnostics>().front_target_visible),
+            max_frames: 60,
+        })
+        .then(assertions::custom("front target visibility restored", |world| {
+            world.resource::<crate::LabDiagnostics>().front_target_visible
+        }))
+        .then(inspect::log_resource::<crate::LabDiagnostics>("range_cutoff_restored"))
+        .then(Action::Screenshot("range_cutoff_restored".into()))
+        .then(Action::WaitFrames(1))
+        .then(assertions::log_summary("fov_guard_range_cutoff"))
         .build()
 }
 
