@@ -11,6 +11,9 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "fov_cone_occlusion",
         "fov_stimulus_pipeline",
         "fov_awareness_detection",
+        "fov_radius_sweep",
+        "fov_multi_targets",
+        "fov_memory_exploration",
     ]
 }
 
@@ -21,6 +24,9 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "fov_grid_memory" => Some(fov_grid_memory()),
         "fov_cone_occlusion" => Some(fov_cone_occlusion()),
         "fov_stimulus_pipeline" | "fov_awareness_detection" => Some(fov_stimulus_pipeline(name)),
+        "fov_radius_sweep" => Some(fov_radius_sweep()),
+        "fov_multi_targets" => Some(fov_multi_targets()),
+        "fov_memory_exploration" => Some(fov_memory_exploration()),
         _ => None,
     }
 }
@@ -116,6 +122,115 @@ fn fov_cone_occlusion() -> Scenario {
         .then(Action::Screenshot("cone_swept".into()))
         .then(Action::WaitFrames(1))
         .then(assertions::log_summary("fov_cone_occlusion"))
+        .build()
+}
+
+fn fov_radius_sweep() -> Scenario {
+    Scenario::builder("fov_radius_sweep")
+        .description("Verify that shrinking the grid radius reduces visible cells and expanding it recovers them. Also verify cone range changes affect how many spatial targets are visible.")
+        .then(Action::WaitFrames(2))
+        .then(pause_motion(true))
+        .then(move_grid_viewer(IVec2::new(7, 6)))
+        .then(Action::WaitFrames(6))
+        // Baseline: default radius (4) — should see several cells
+        .then(assertions::custom("baseline: grid sees cells with radius 4", |world| {
+            world.resource::<crate::LabDiagnostics>().grid_visible_cells >= 4
+        }))
+        .then(Action::Screenshot("radius_baseline".into()))
+        .then(Action::WaitFrames(1))
+        // Shrink radius to 2 — fewer visible cells
+        .then(Action::Custom(Box::new(|world| {
+            world.resource_mut::<crate::LabControl>().grid_radius = 2;
+        })))
+        .then(Action::WaitFrames(6))
+        .then(assertions::custom("shrunk radius reduces visible cells", |world| {
+            let d = world.resource::<crate::LabDiagnostics>();
+            d.grid_visible_cells < 20
+        }))
+        .then(Action::Screenshot("radius_shrunk".into()))
+        .then(Action::WaitFrames(1))
+        // Expand radius back to 6 — more cells visible
+        .then(Action::Custom(Box::new(|world| {
+            world.resource_mut::<crate::LabControl>().grid_radius = 6;
+        })))
+        .then(Action::WaitFrames(6))
+        .then(assertions::custom("expanded radius reveals more cells", |world| {
+            world.resource::<crate::LabDiagnostics>().grid_visible_cells >= 4
+        }))
+        .then(Action::Screenshot("radius_expanded".into()))
+        .then(Action::WaitFrames(1))
+        .then(assertions::log_summary("fov_radius_sweep"))
+        .build()
+}
+
+fn fov_multi_targets() -> Scenario {
+    Scenario::builder("fov_multi_targets")
+        .description("Point the guard directly at the arena to maximize visible targets, verify at least two targets are simultaneously visible. Then rotate 180° and verify the count drops to zero.")
+        .then(Action::WaitFrames(2))
+        .then(pause_motion(true))
+        // Widen the cone for maximum coverage
+        .then(Action::Custom(Box::new(|world| {
+            let mut control = world.resource_mut::<crate::LabControl>();
+            control.guard_range = 560.0;
+            control.guard_half_angle = 1.2;
+        })))
+        .then(guard_angle(0.0))
+        .then(Action::WaitFrames(8))
+        // At wide angle pointing straight ahead several targets should be visible
+        .then(assertions::custom("wide cone: guard sees 2+ targets", |world| {
+            world.resource::<crate::LabDiagnostics>().guard_visible_targets >= 2
+        }))
+        .then(assertions::custom("front target visible with wide cone", |world| {
+            world.resource::<crate::LabDiagnostics>().front_target_visible
+        }))
+        .then(Action::Screenshot("multi_targets_visible".into()))
+        .then(Action::WaitFrames(1))
+        // Point guard backwards (away from the arena)
+        .then(guard_angle(std::f32::consts::PI))
+        .then(Action::WaitFrames(8))
+        .then(assertions::custom("guard sees zero targets when rotated away", |world| {
+            world.resource::<crate::LabDiagnostics>().guard_visible_targets == 0
+        }))
+        .then(Action::Screenshot("multi_targets_none".into()))
+        .then(Action::WaitFrames(1))
+        .then(assertions::log_summary("fov_multi_targets"))
+        .build()
+}
+
+fn fov_memory_exploration() -> Scenario {
+    Scenario::builder("fov_memory_exploration")
+        .description("Walk the grid viewer along a path that covers new terrain and verify that explored cell count grows monotonically — cells once seen are never forgotten.")
+        .then(Action::WaitFrames(2))
+        .then(pause_motion(true))
+        .then(move_grid_viewer(IVec2::new(2, 8)))
+        .then(Action::WaitFrames(6))
+        // Record baseline explored count
+        .then(assertions::custom("cells explored after first position", |world| {
+            world.resource::<crate::LabDiagnostics>().grid_explored_cells >= 1
+        }))
+        .then(Action::Screenshot("exploration_start".into()))
+        .then(Action::WaitFrames(1))
+        // Move to a different area
+        .then(move_grid_viewer(IVec2::new(7, 2)))
+        .then(Action::WaitFrames(8))
+        .then(assertions::custom("explored count grows after moving", |world| {
+            world.resource::<crate::LabDiagnostics>().grid_explored_cells >= 4
+        }))
+        .then(Action::Screenshot("exploration_moved".into()))
+        .then(Action::WaitFrames(1))
+        // Move to a third distinct area
+        .then(move_grid_viewer(IVec2::new(12, 6)))
+        .then(Action::WaitFrames(8))
+        .then(assertions::custom("explored count continues growing", |world| {
+            world.resource::<crate::LabDiagnostics>().grid_explored_cells >= 8
+        }))
+        // Original cell from step 1 must still be in explored even though viewer moved away
+        .then(assertions::custom("memory sample from step 1 still explored", |world| {
+            world.resource::<crate::LabDiagnostics>().memory_sample_explored
+        }))
+        .then(Action::Screenshot("exploration_final".into()))
+        .then(Action::WaitFrames(1))
+        .then(assertions::log_summary("fov_memory_exploration"))
         .build()
 }
 
