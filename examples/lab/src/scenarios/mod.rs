@@ -1,7 +1,14 @@
+mod support;
+
 use bevy::prelude::*;
-use saddle_bevy_e2e::{action::Action, actions::{assertions, inspect}, scenario::Scenario};
+use saddle_bevy_e2e::{
+    action::Action,
+    actions::{assertions, inspect},
+    scenario::Scenario,
+};
 
 use crate::{pipeline_target_state, set_grid_viewer_cell, set_guard_angle, set_pause_motion};
+use support::{freeze_and_aim_guard, move_grid_viewer_and_settle};
 
 pub fn list_scenarios() -> Vec<&'static str> {
     vec![
@@ -48,9 +55,7 @@ fn guard_angle(angle: f32) -> Action {
 fn build_smoke(name: &'static str) -> Scenario {
     Scenario::builder(name)
         .description("Boot the shared-crate lab, verify both the grid and cone viewers initialize, and capture the default mixed scene.")
-        .then(pause_motion(true))
-        .then(guard_angle(0.0))
-        .then(Action::WaitFrames(8))
+        .then_many(freeze_and_aim_guard(0.0, 8))
         .then(assertions::custom("grid visibility initialized", |world| {
             world.resource::<crate::LabDiagnostics>().grid_visible_cells > 0
         }))
@@ -77,15 +82,13 @@ fn fov_grid_memory() -> Scenario {
         .description("Move the grid viewer away from a known sample cell and verify it downgrades from visible to explored instead of vanishing.")
         .then(Action::WaitFrames(2))
         .then(pause_motion(true))
-        .then(move_grid_viewer(IVec2::new(2, 8)))
-        .then(Action::WaitFrames(6))
+        .then_many(move_grid_viewer_and_settle(IVec2::new(2, 8), 6))
         .then(assertions::custom("memory sample starts visible", |world| {
             world.resource::<crate::LabDiagnostics>().memory_sample_visible
         }))
         .then(Action::Screenshot("memory_visible".into()))
         .then(Action::WaitFrames(1))
-        .then(move_grid_viewer(IVec2::new(12, 2)))
-        .then(Action::WaitFrames(8))
+        .then_many(move_grid_viewer_and_settle(IVec2::new(12, 2), 8))
         .then(assertions::custom("memory sample is no longer visible", |world| {
             !world.resource::<crate::LabDiagnostics>().memory_sample_visible
         }))
@@ -102,9 +105,7 @@ fn fov_cone_occlusion() -> Scenario {
     Scenario::builder("fov_cone_occlusion")
         .description("Aim the guard straight across the arena and verify the front target is visible while the hidden target stays blocked behind the occluder.")
         .then(Action::WaitFrames(2))
-        .then(pause_motion(true))
-        .then(guard_angle(0.0))
-        .then(Action::WaitFrames(6))
+        .then_many(freeze_and_aim_guard(0.0, 6))
         .then(assertions::custom("front target is visible", |world| {
             world.resource::<crate::LabDiagnostics>().front_target_visible
         }))
@@ -134,9 +135,7 @@ fn fov_guard_range_cutoff() -> Scenario {
             "Reduce the guard cone range below the front target distance, verify the front target drops out while the closer pipeline target remains visible, then restore the range.",
         )
         .then(Action::WaitFrames(2))
-        .then(pause_motion(true))
-        .then(guard_angle(0.0))
-        .then(Action::WaitFrames(6))
+        .then_many(freeze_and_aim_guard(0.0, 6))
         .then(assertions::custom("front target starts visible", |world| {
             world.resource::<crate::LabDiagnostics>().front_target_visible
         }))
@@ -180,8 +179,7 @@ fn fov_radius_sweep() -> Scenario {
         .description("Verify that shrinking the grid radius reduces visible cells and expanding it recovers them. Also verify cone range changes affect how many spatial targets are visible.")
         .then(Action::WaitFrames(2))
         .then(pause_motion(true))
-        .then(move_grid_viewer(IVec2::new(7, 6)))
-        .then(Action::WaitFrames(6))
+        .then_many(move_grid_viewer_and_settle(IVec2::new(7, 6), 6))
         // Baseline: default radius (4) — should see several cells
         .then(assertions::custom("baseline: grid sees cells with radius 4", |world| {
             world.resource::<crate::LabDiagnostics>().grid_visible_cells >= 4
@@ -252,8 +250,7 @@ fn fov_memory_exploration() -> Scenario {
         .description("Walk the grid viewer along a path that covers new terrain and verify that explored cell count grows monotonically — cells once seen are never forgotten.")
         .then(Action::WaitFrames(2))
         .then(pause_motion(true))
-        .then(move_grid_viewer(IVec2::new(2, 8)))
-        .then(Action::WaitFrames(6))
+        .then_many(move_grid_viewer_and_settle(IVec2::new(2, 8), 6))
         // Record baseline explored count
         .then(assertions::custom("cells explored after first position", |world| {
             world.resource::<crate::LabDiagnostics>().grid_explored_cells >= 1
@@ -261,16 +258,14 @@ fn fov_memory_exploration() -> Scenario {
         .then(Action::Screenshot("exploration_start".into()))
         .then(Action::WaitFrames(1))
         // Move to a different area
-        .then(move_grid_viewer(IVec2::new(7, 2)))
-        .then(Action::WaitFrames(8))
+        .then_many(move_grid_viewer_and_settle(IVec2::new(7, 2), 8))
         .then(assertions::custom("explored count grows after moving", |world| {
             world.resource::<crate::LabDiagnostics>().grid_explored_cells >= 4
         }))
         .then(Action::Screenshot("exploration_moved".into()))
         .then(Action::WaitFrames(1))
         // Move to a third distinct area
-        .then(move_grid_viewer(IVec2::new(12, 6)))
-        .then(Action::WaitFrames(8))
+        .then_many(move_grid_viewer_and_settle(IVec2::new(12, 6), 8))
         .then(assertions::custom("explored count continues growing", |world| {
             world.resource::<crate::LabDiagnostics>().grid_explored_cells >= 8
         }))
